@@ -59,6 +59,19 @@ settings stored as JSON strings via `definePluginSettings` like the other
 Xicord plugins. All injected UI wrapped in ErrorBoundary; store wraps guarded
 so a missing method is skipped silently.
 
+## Review-driven decisions (post-implementation)
+
+- The trait name `Mutual` is **reserved**: the plugin tags its auto-created
+  entry with `managed: true` and only ever wipes managed entries, so a
+  hand-made trait with that name keeps its users/audio but membership is
+  still auto-synced while the plugin runs.
+- The fetch pump is a self-scheduling async loop (not `setInterval`), so the
+  1-per-2.5 s spacing holds even when a request is slow, and a stop() mid
+  fetch drops the result instead of writing after disable.
+- Fetch failures keep the previous known-good result and retry in 5 min.
+- All store wraps and onChange handlers check an `active` flag, so hiding
+  fails open once the plugin is disabled even if un-wrapping is defeated.
+
 ## Known limits
 
 - Search/friends-tab hiding depends on Discord internals; wraps are
@@ -67,3 +80,8 @@ so a missing method is skipped silently.
   fully tag on purpose (rate-limit safety).
 - Wrapping `getMutableRelationships` returns a filtered copy, which conflicts
   with plugins that mutate that map (e.g. ImplicitRelationships) while enabled.
+- Editing traits in the open Traits modal while the scanner is writing can
+  drop a concurrent auto-sync until the cache expires (pre-existing modal
+  snapshot behaviour).
+- Disabling the plugin removes scanning/hiding immediately, but the VC row
+  tag patch needs the restart Vencord prompts for.
