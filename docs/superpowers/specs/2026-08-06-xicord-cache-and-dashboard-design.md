@@ -41,6 +41,27 @@ direct labels and a table fallback:
   against a generated 116-session sample cache through a DOM shim (KPIs, all
   charts, and the session table render without throwing).
 
+## Xicord Collector (added)
+`src/userplugins/xicordCollector.tsx`. A background collector that enriches the
+dataset beyond voice, bounded and privacy-conscious:
+- **Message activity** — counts only (no content): per-day totals, per-user and
+  per-channel counts, for authors in a "followed" set (friends ∪ Traits users ∪
+  Mutuals targets ∪ Orbit watched), recomputed every 30s.
+- **Presence sessions** — friends' online/offline sessions {userId, start, end}.
+- Persisted (debounced) to settings, day-buckets pruned past 60 days, presence
+  capped at 1000. Exposes `CollectorAPI.dump()` for the cache.
+
+The cache now embeds `messages` and `presence`; the dashboard gained a
+"Messages & presence" section: messages over time (area, range-aware), top
+people & channels by messages, and most time online — shown only when the
+collector has data.
+
+## Cache import / restore (added)
+The Cache modal gained **Import / Restore…**: it reads a cache JSON and writes
+`targets`, `hidden`, `ghosted`, `watched`, `watchlistRules` and `traits` back
+into the plugins (their onChange handlers pick it up; Traits/Watchlist read
+live). Makes Cache a backup + machine-migration tool. Overwrites those lists.
+
 ## Known limits
 - The cache is a point-in-time snapshot; re-export to refresh.
 - Dashboard only knows the users/channels present in the cache (IDs Discord had
