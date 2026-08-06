@@ -54,6 +54,34 @@ It is the only module that knows how Traits stores membership.
 - `audio()` now no-ops on an empty URL instead of letting `play()` reject — the
   auto-created Target trait starts with no clip.
 
+## Xicord Mutuals folded into the same list
+Mutuals used to keep its own `targets` setting — confusingly described as "Mutual
+target user IDs", a second thing called *target*. It now reads its scan seeds
+from the same reserved trait, so there is **one list of people**: everyone on it
+is watched by every watcher *and* used as a seed for mutual-friend scanning.
+
+- `getTargets()` resolves to `targetIds()`. The `targets` setting survives only
+  as a one-time migration (on start, and on write so a Cache restore of a
+  pre-merge backup lands in the trait rather than sitting there until restart).
+- Mutuals' "Mutual Targets" editor now edits the shared trait and is relabelled
+  accordingly. It was kept rather than deleted because it is the only way to add
+  a target **by ID** — the Traits row and the context menu can only tick users
+  you can right-click.
+- `toggleTarget` delegates to the helper, keeping its "they must be a friend to
+  match" toast.
+
+### The loop this had to avoid
+Mutuals also *writes* the auto-managed "Mutual" trait into the same `tasks` blob
+it now *reads* targets from, and `subscribeTargets` fires on any write to that
+path. Left alone: scanner writes Mutual → listener fires → `onTargetsChanged` →
+`clearManagedMutualTrait` + N× `syncMutualTrait` → listener fires → forever.
+
+`onTargetTraitChanged` compares target membership against `lastTargetKey` and
+bails when unchanged, which a Mutual-trait write always is. `lastTargetKey` is
+assigned *before* calling `onTargetsChanged`, so the writes that handler makes
+re-enter against the already-updated key. Start-up order matters too: migration
+runs *before* subscribing, so the migration's own write can't re-enter.
+
 ## Defects found in review and fixed
 - **Two "Target" traits could diverge.** The Traits context menu matched trait
   names *exactly* while `_targetTrait` matches case-insensitively, so with both
@@ -96,6 +124,35 @@ It is the only module that knows how Traits stores membership.
   user *after* the hook; the self-check moved into the patch callback, matching
   Orbit's shape.
 
+### From the merge review
+- **Cache export dropped `managed`.** The export mapped traits to
+  `{name, url, users}`, discarding the flag that marks the Mutual trait as
+  auto-managed. After any export→restore round-trip `clearManagedMutualTrait`
+  would no-op forever while syncing kept appending, so the trait grew
+  monotonically and never reset. The export now spreads the original entry, as
+  the restore already did.
+- **Hundreds of writes per target toggle.** `onTargetsChanged` did a clear plus
+  one `syncMutualTrait` per cached user, each a full settings stringify *and* a
+  synchronous disk IPC, re-rendering every subscriber each time. Replaced with
+  `syncMutualTraitAll()`, which reconciles the whole trait in one write and
+  writes nothing when already correct.
+- **Corrupt settings could wipe the Target trait.** Mutuals' `readTraits`
+  returned `[]` on a JSON parse failure, and the next write would persist that
+  empty array over the single source of truth for all six watchers. It returns
+  `null` now, matching its own disabled-plugin path.
+- **A restored stale Mutual trait was never reconciled.** The guard keyed only on
+  target membership, so a Cache restore that changed just the Mutual trait was
+  ignored. The key now covers both, and `writeTraits` raises a `suppress` counter
+  for the duration of our own writes (settings listeners fire synchronously) and
+  refreshes the key afterwards — so we react to everyone else's writes but never
+  to our own.
+- **Orbit re-rendered on every Mutuals write.** Mutuals rewrites its trait every
+  few seconds while scanning, and Orbit's subscriber ran unconditionally. It now
+  compares the target list first.
+- **Inconsistent hand-made-trait handling.** The new bulk reconcile skipped a
+  user-made trait named "Mutual" while the incremental path still appended to it;
+  both now leave it alone, which is what the original `managed` flag intended.
+
 Not fixed (pre-existing, unrelated to this change): renaming any trait loses
 input focus because the row `key` is its name; the context-menu patches call
 their item functions directly so hook counts vary; Orbit's activity log is
@@ -114,6 +171,17 @@ index-keyed. These predate the change and are noted for a later pass.
 - Migration dry-run against **this install's actual settings shape** (Traits'
   `tasks` unset, 3 IDs in Orbit's `watched`): all three carry into the Target
   trait, the legacy setting clears, and a second start is a no-op.
+- Feedback-loop test: 50 simulated `syncMutualTrait` writes (mirroring Mutuals'
+  real write path) leave `targetIds()` byte-identical, so the recursion guard
+  trips every time — while a genuine target change still moves the key. Plus a
+  test that Orbit's and Mutuals' legacy lists merge into one trait as a union,
+  without duplicates or a second Target row.
+- 20-assertion harness at `src/userplugins/_mutualsTarget.test.mjs` extracts the
+  real `syncMutualTraitAll()` and pins the properties the merge relies on: one
+  write per reconcile and none when already correct, removals in the same single
+  write, a hand-made "Mutual" trait left untouched, unreadable settings producing
+  no write at all (Target survives), and other plugins' traits and extra fields
+  preserved.
 - Cross-plugin **format contract** is tested against mirrors of the other
   plugins' actual parsers: Traits' context-menu writes are readable by
   `_targetTrait`, and its writes are readable by both Traits' checkbox
