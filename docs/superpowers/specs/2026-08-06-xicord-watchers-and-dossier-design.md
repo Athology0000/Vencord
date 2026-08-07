@@ -151,6 +151,25 @@ server's loaded member list, capped at `MEMBER_SCAN_CAP = 200` per open. Xicord
 Mutuals throttles to one fetch every 2.5s and caches, so this is a slow background
 fill; an uncapped member sweep would otherwise run for hours.
 
+## Avatars were invisible (2026-08-06)
+The `<clipPath>` elements were emitted in a `<defs>` block at the top of the SVG,
+but the simulation looks up its per-node handles with
+`nodeGroup.querySelector("circle.xd-clip")`. That returned `null` for every node,
+so the clip circles were never moved off `(0,0)` — and every avatar was clipped
+against a circle at the origin, i.e. clipped away entirely. Only the coloured disc
+and initial underneath showed, which is exactly the intended fallback, so it looked
+like the images had simply failed to load.
+
+Fix: emit each `<clipPath>` **inside its own node group** (a `clipPath` renders
+nothing itself, so it is free to live there) and set `xlinkHref` alongside `href`
+for older SVG handling.
+
+**The test that should have caught this was vacuous**: it asserted
+`Number.isFinite(+clip.getAttribute("cx"))`, and `+null` is `0`, which is finite —
+so it passed against a null element. Replaced with assertions that each clip circle
+exists, is not at the origin, and sits exactly on its node's centre, plus one that
+each avatar image is placed over its node.
+
 ## Known limits
 - Watchers only fire for what Discord tells your client (shared servers, visible
   channels, cached presence).
