@@ -76,6 +76,29 @@ swell, edges brighten).
 - Click still opens a profile, but only when the pointer moved < 4px — otherwise
   every drag would open someone's profile on release.
 
+## Dossier: unknown users, and the full view (2026-08-06)
+Propagation surfaces people you have never interacted with, so `UserStore` had no
+record of them and the UI rendered raw snowflake IDs with broken avatars.
+
+- Missing users are fetched with `UserUtils.getUser`, one every 220ms so the
+  endpoint isn't hammered, with failures remembered so a deleted account isn't
+  retried forever. The visible graph jumps the queue ahead of the picker list.
+- Avatars fall back to `IconUtils.getDefaultAvatarURL(id)` instead of rendering a
+  broken image, and an unresolvable name shows as `Unknown (123456…)`.
+
+`NetworkGraph` was generalised into **`ForceGraph`**, which takes a node list and
+an explicit link list rather than assuming a single hub. Springs run along links,
+so the same component drives both views:
+
+- **One person** — the previous ego network (target anchored in the middle).
+- **Full dossier** — everyone with a record, wired to everyone they have shared a
+  call with. Pairs are deduplicated (both people hold a record of the same
+  pairing; the stronger count wins), nodes are capped at the best-connected 60 to
+  keep the O(n²) repulsion pass cheap and the picture legible, node size tracks
+  total connection strength, and Target-trait members are drawn in brand blue.
+- Link rest length scales with node count (`620/√n`, clamped), otherwise a large
+  web sprawls straight off the canvas.
+
 ## Known limits
 - Watchers only fire for what Discord tells your client (shared servers, visible
   channels, cached presence).
