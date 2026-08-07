@@ -1,6 +1,7 @@
 // Extracts the REAL network() from xicord-dashboard.html (by brace matching, so it
 // can't drift from the shipped code) and drives it against a minimal SVG/DOM shim.
 import { readFileSync } from "fs";
+import { createRequire } from "module";
 
 const HTML = readFileSync("C:/Users/aeare/Desktop/Vencord/xicord-dashboard.html", "utf8");
 
@@ -583,6 +584,107 @@ ok("the meta line reports found and matching separately", /1 person found · 0 m
 ok("a whitespace-only query is not treated as a filter",
     makeList([{ id: "u1", friends: ["f1"], guilds: [] }], "   ").meta === "1 person found",
     makeList([{ id: "u1", friends: ["f1"], guilds: [] }], "   ").meta);
+
+console.log("\n-- call companions: added first, most recently in a call at the top --");
+const DC = new Function(`${extract("mutualsIndex")}${extract("friendsOfSubject")}${extract("orderCompanions")}
+    return { mutualsIndex, friendsOfSubject, orderCompanions };`)();
+const comp = (id, count, ms, last) => [id, { count, ms, last }];
+const seq = r => r.map(x => x.id + (x.added ? "*" : "")).join(",");
+
+let dcRows = DC.orderCompanions([
+    comp("stranger", 100, 99999, 5000),
+    comp("friendOld", 5, 50, 1000),
+    comp("friendNew", 1, 5, 9000),
+], new Set(["friendOld", "friendNew"]));
+ok("added people lead, ordered by most recent call", seq(dcRows) === "friendNew*,friendOld*,stranger", seq(dcRows));
+ok("a heavier stranger still ranks below them", dcRows[2].id === "stranger");
+dcRows = DC.orderCompanions([comp("light", 1, 1, 9999), comp("heavy", 80, 80, 1)], null);
+ok("with nobody scanned, the old weight order stands", seq(dcRows) === "heavy,light", seq(dcRows));
+ok("and nothing is marked as added", dcRows.every(r => !r.added));
+ok("no companions is empty, not a crash", DC.orderCompanions([], new Set()).length === 0);
+ok("a missing record does not produce NaN ordering",
+    DC.orderCompanions([["a", undefined], comp("b", 1, 1, 1)], null).length === 2);
+
+console.log("\n-- the companion row's HTML is not injectable --");
+// Unlike friends.length, `count` is whatever the loaded JSON says it is.
+const dcHosts = {};
+const dc$ = sel => (dcHosts[sel] ||= { _t: "", _h: "", set textContent(v) { this._t = v; }, get textContent() { return this._t; }, set innerHTML(v) { this._h = v; }, get innerHTML() { return this._h; } });
+function renderCompanionHtml(view, subject, names = {}, mutuals = [], friendMap = {}) {
+    const fn = new Function("$", "cache", "uname", "uavatar", "esc", "fmtDur", "ago",
+        "mutualsIndex", "friendsOfSubject", "orderCompanions",
+        `${extract("renderCompanions")}; renderCompanions(arguments[10], arguments[11]); return null;`);
+    fn(dc$, { mutuals, friendMap }, id => names[id] ?? id, () => "", escFn,
+        ms => ms + "ms", () => "1h ago", DC.mutualsIndex, DC.friendsOfSubject, DC.orderCompanions,
+        view, subject);
+    return dcHosts["#dossier-companions"].innerHTML;
+}
+let dcHtml = renderCompanionHtml({ companions: { evil: { count: '<img src=x onerror=alert(1)>', ms: 1, last: 1 } } }, "s1");
+ok("a hostile count cannot inject markup", dcHtml.indexOf("<img src=x") < 0, dcHtml.slice(0, 200));
+ok("it degrades to 0 rather than to junk", /">0× /.test(dcHtml), dcHtml.slice(0, 200));
+dcHtml = renderCompanionHtml({ companions: { u9: { count: 2, ms: 1, last: 1 } } }, "s1", { u9: "<b>bold</b>" });
+ok("a hostile username is escaped", dcHtml.indexOf("<b>bold</b>") < 0 && dcHtml.indexOf("&lt;b&gt;") >= 0);
+dcHtml = renderCompanionHtml({ companions: {} }, "s1");
+ok("no companions renders nothing at all", dcHtml === "", JSON.stringify(dcHtml));
+dcHtml = renderCompanionHtml({ companions: { a: { count: 1, ms: 1, last: 9 }, b: { count: 5, ms: 1, last: 1 } } },
+    "s1", { a: "Ana", b: "Ben" }, [{ userId: "s1", mutuals: ["a"] }]);
+ok("the added row carries the tag and the class", /dc-row added/.test(dcHtml) && /dc-tag/.test(dcHtml));
+ok("and the heading names the subject", /has added come first/.test(dcHtml));
+dcHtml = renderCompanionHtml({ companions: { a: { count: 1, ms: 1, last: 9 } } }, "s1");
+ok("with nobody scanned the heading does not claim anything about additions",
+    /ordered by how often/.test(dcHtml) && !/has added come first/.test(dcHtml));
+
+console.log("\n-- who counts as 'added', read off the snapshot --");
+const idx = DC.mutualsIndex([{ userId: "u1", mutuals: ["f1", "f2"] }, { userId: "u2", mutuals: [] }]);
+ok("a scanned person's mutuals are found", [...DC.friendsOfSubject("u1", idx, {})].join(",") === "f1,f2");
+// scanned-with-none is a real answer and must not fall through to a stale sweep finding
+ok("scanned with none is an empty set, not null",
+    DC.friendsOfSubject("u2", idx, { u2: { friends: ["stale"] } })?.size === 0);
+ok("someone never scanned falls back to the sweep's saved finding",
+    [...DC.friendsOfSubject("u3", idx, { u3: { friends: ["f9"] } })].join(",") === "f9");
+ok("someone with neither is null — 'we do not know', not 'they added nobody'",
+    DC.friendsOfSubject("u4", idx, {}) === null);
+ok("a malformed mutuals dump does not throw", Object.keys(DC.mutualsIndex([null, {}, 7])).length === 0);
+
+console.log("\n-- and it agrees with the in-Discord dossier, on the same input --");
+// Two views of one dossier disagreeing about who matters would be worse than either
+// ordering alone, and nothing but this test connects the two files.
+const PSRC = readFileSync("C:/Users/aeare/Desktop/Vencord/src/userplugins/xicordDossier.tsx", "utf8");
+const pStart = PSRC.indexOf("export function orderCompanions(");
+let pi = PSRC.indexOf("(", pStart), pd = 0;
+for (; pi < PSRC.length; pi++) {
+    if (PSRC[pi] === "(") pd++;
+    else if (PSRC[pi] === ")") { pd--; if (!pd) { pi++; break; } }
+}
+if (PSRC.slice(pi, PSRC.indexOf("{", pi)).includes(":")) {
+    let k = PSRC.indexOf("{", pi), bd = 0;
+    for (; k < PSRC.length; k++) {
+        if (PSRC[k] === "{") bd++;
+        else if (PSRC[k] === "}") { bd--; if (!bd) { pi = k + 1; break; } }
+    }
+}
+let pj = PSRC.indexOf("{", pi), pdep = 0, pEnd = -1;
+for (; pj < PSRC.length; pj++) {
+    if (PSRC[pj] === "{") pdep++;
+    else if (PSRC[pj] === "}") { pdep--; if (!pdep) { pEnd = pj + 1; break; } }
+}
+const esbuild = createRequire(import.meta.url)("esbuild");
+const pluginOrder = new Function(
+    `${esbuild.transformSync(PSRC.slice(pStart, pEnd).replace(/^export /, ""), { loader: "ts" }).code}; return orderCompanions;`)();
+
+const dcCases = [
+    { c: [comp("a", 5, 5, 9), comp("b", 90, 90, 1), comp("c", 1, 1, 5)], f: new Set(["a", "c"]) },
+    { c: [comp("a", 5, 5, 9), comp("b", 90, 90, 1)], f: null },
+    { c: [comp("x", 1, 1, 1), comp("y", 1, 1, 1)], f: new Set(["x", "y"]) },
+    { c: [comp("only", 3, 3, 3)], f: new Set() },
+    { c: [], f: new Set(["ghost"]) },
+];
+let agree = true, where = "";
+for (const t of dcCases) {
+    const mine = seq(DC.orderCompanions(t.c, t.f));
+    const theirs = seq(pluginOrder(t.c, t.f));
+    if (mine !== theirs) { agree = false; where = `${mine}  vs  ${theirs}`; break; }
+}
+ok("the dashboard and the plugin order identically across every case", agree, where);
 
 console.log(`\n${pass} passed, ${fail} failed\n`);
 process.exit(fail ? 1 : 0);

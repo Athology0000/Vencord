@@ -177,6 +177,18 @@
   .fm-chip img{width:14px;height:14px;border-radius:50%}
   .fm-chip.more{background:transparent;color:var(--muted);font-weight:400}
   .fm-where{margin:3px 0 0 30px;color:var(--muted);font-size:11px}
+  /* call companions on a dossier: added-first, most recent at the top.
+     In Discord this distinction is drawn in gold; this page is deliberately hue-free,
+     so the emphasis is carried by brightness and a chip, the same way .fm-chip does it. */
+  .dc-row{display:flex;align-items:center;gap:9px;padding:5px 2px;border-bottom:1px solid var(--border)}
+  .dc-row img,.dc-row .dc-noav{width:22px;height:22px;border-radius:50%;flex:none;background:var(--surface-2)}
+  .dc-row.added img,.dc-row.added .dc-noav{box-shadow:0 0 0 2px var(--data)}
+  .dc-row .who{font-weight:600;font-size:13px;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .dc-row.added .who{color:var(--data)}
+  .dc-tag{font-size:10px;text-transform:uppercase;letter-spacing:.04em;font-style:normal;font-weight:800;
+    color:var(--data);background:var(--data-soft);padding:1px 6px;border-radius:9px;flex:none}
+  .dc-num{color:var(--muted);font-size:12px;font-variant-numeric:tabular-nums;flex:none}
+  .dc-when{color:var(--muted);font-size:12px;min-width:64px;text-align:right;flex:none}
   .lk-card{border:1px solid var(--border);border-radius:12px;padding:12px 14px;margin-top:10px;background:var(--surface)}
   .lk-head{font-weight:700;display:flex;align-items:center;gap:8px;margin-bottom:6px}
   .lk-id{font-family:var(--mono);font-size:11px;color:var(--muted);font-weight:400}
@@ -339,6 +351,7 @@
         </div>
         <p class="hint" style="margin-top:0">Public-server voice channels only · dot size = times seen together · line weight = shared calls</p>
         <div class="plot" id="ch-dossier"></div>
+        <div id="dossier-companions"></div>
         <div id="dossier-games"></div>
       </div>
     </div>
@@ -1697,6 +1710,66 @@
     $("#fm-more").textContent = rows.length>200 ? ("Showing first 200 of "+rows.length+" — narrow with the filter.") : "";
   }
 
+  /* ---------- call companions, ordered the way the in-Discord dossier orders them ---------- */
+  // Deliberately the same rules as orderCompanions() in xicordDossier.tsx: the people the
+  // subject has ADDED lead, most recently in a call at the top, and everyone below stays
+  // on weight. Two views of one dossier disagreeing about who matters would be worse
+  // than either ordering on its own.
+  function mutualsIndex(list){
+    var by = Object.create(null);
+    (list||[]).forEach(function(r){ if(r&&r.userId) by[r.userId]=Array.isArray(r.mutuals)?r.mutuals:[]; });
+    return by;
+  }
+  /**
+   * Who this person is PROVEN to have added. A scanned person with no mutuals is an
+   * empty set (a real answer); someone never scanned is null ("we do not know"), which
+   * must leave the list in its old order rather than assert they have added nobody.
+   */
+  function friendsOfSubject(id, mutualsBy, friendMap){
+    if(mutualsBy && id in mutualsBy) return new Set(mutualsBy[id]);
+    var f=(friendMap||{})[id];
+    return f && Array.isArray(f.friends) && f.friends.length ? new Set(f.friends) : null;
+  }
+  function orderCompanions(entries, friends){
+    var rows=(entries||[]).map(function(e){
+      var rec=e[1]||{};
+      return { id:e[0], rec:rec, added: !!(friends && friends.has(e[0])) };
+    });
+    return rows.sort(function(a,b){
+      return (b.added?1:0)-(a.added?1:0)
+        || (a.added ? (b.rec.last||0)-(a.rec.last||0)
+                    : (b.rec.count||0)-(a.rec.count||0) || (b.rec.ms||0)-(a.rec.ms||0))
+        || (a.id<b.id?-1:a.id>b.id?1:0);
+    });
+  }
+
+  function renderCompanions(view, subjectId){
+    var host=$("#dossier-companions");
+    var entries=Object.keys(view.companions||{}).map(function(k){return [k,view.companions[k]];});
+    if(!entries.length){ host.innerHTML=""; return; }
+    var friends=friendsOfSubject(subjectId, mutualsIndex(cache.mutuals), cache.friendMap);
+    var rows=orderCompanions(entries, friends);
+    var anyAdded=rows.some(function(r){return r.added;});
+    var head='<p class="hint" style="margin-top:14px;margin-bottom:2px">'
+      + (anyAdded
+        ? 'Calls with — people <b>'+esc(uname(subjectId))+'</b> has added come first, most recently in a call at the top'
+        : 'Calls with — ordered by how often they have been seen together')
+      + '</p>';
+    host.innerHTML=head+'<div class="conn-list">'+rows.slice(0,60).map(function(r){
+      var av=uavatar(r.id);
+      return '<div class="dc-row'+(r.added?' added':'')+'">'
+        +(av?'<img src="'+esc(av)+'" alt="" loading="lazy">':'<span class="dc-noav"></span>')
+        +'<span class="who">'+esc(uname(r.id))+'</span>'
+        +(r.added?'<i class="dc-tag" title="a proven, mutual friendship">added</i>':'')
+        // count is coerced, not just defaulted: it comes straight out of a JSON file the
+        // user loads, so a string there would be interpolated into the page as markup.
+        // (fmtDur/ago only ever return arithmetic, and are escaped besides.)
+        +'<span class="dc-num">'+(Number(r.rec.count)||0)+'× · '+esc(fmtDur(r.rec.ms||0))+'</span>'
+        +'<span class="dc-when">'+esc(ago(r.rec.last))+'</span></div>';
+    }).join("")+'</div>'
+      + (rows.length>60 ? '<p class="trow-more">Showing the closest 60 of '+rows.length+'.</p>' : "");
+  }
+
   function renderDossier(){
     var D=cache.dossiers||{};
     var ids=Object.keys(D).filter(function(id){return D[id]&&D[id].companions&&Object.keys(D[id].companions).length;});
@@ -1713,6 +1786,7 @@
     $("#dossier-meta").textContent=nComp+" companion"+(nComp===1?"":"s")+" across "+nGuild+" server"+(nGuild===1?"":"s")
       +" · the graph reacts as you move the cursor · drag a node to rearrange, drag the background to pan, double-click to reset";
     network($("#ch-dossier"),dossierTarget,view);
+    renderCompanions(view,dossierTarget);
 
     /* games this person has been seen playing (via presence) */
     var G=view.games||{};
