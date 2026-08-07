@@ -1,0 +1,1425 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Xicord Dashboard</title>
+</head>
+<body>
+<style>
+  /* cve-lab grayscale — no hue anywhere. Committed dark; the theme toggle stays
+     but both variants are hue-free. */
+  :root, :root[data-theme="dark"], :root[data-theme="light"] {
+    --bg:#000000; --page:#000000; --surface:#0f0f0f; --surface-2:#141414;
+    --ink:#fafafa; --ink-2:#a1a1a1; --muted:#7d7d7d;
+    --grid:#1b1b1b; --baseline:#2c2c2c; --border:rgba(255,255,255,.08);
+    --border-lit:rgba(255,255,255,.18);
+    --data:#e6e6e6; --data-soft:rgba(255,255,255,.08); --data-2:#9a9a9a;
+    --accent:#e6e6e6; --good:#d4d4d4; --warn:#c9c9c9;
+    --headline:linear-gradient(180deg,#fafafa 0%,#d4d4d4 45%,#8a8a8a 100%);
+    --shadow:0 4px 20px rgba(0,0,0,.5),0 0 0 1px rgba(255,255,255,.02);
+    --card-glow:0 -20px 80px -20px rgba(255,255,255,.08) inset;
+    --mono:ui-monospace,"Cascadia Code","SF Mono",Menlo,Consolas,monospace;
+    --sans:"Inter",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    color-scheme:dark;
+  }
+
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);
+    -webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility;line-height:1.55;
+    position:relative;min-height:100vh;overflow-x:hidden;letter-spacing:-.005em}
+  /* cve-lab spotlight: a soft white wash spilling down from the top of the page */
+  body::before{content:"";position:fixed;top:-220px;left:50%;transform:translateX(-50%);
+    width:min(1360px,150vw);height:820px;pointer-events:none;z-index:0;
+    background:radial-gradient(50% 50% at 50% 50%,rgba(255,255,255,.10),rgba(255,255,255,.03) 42%,transparent 70%);
+    filter:blur(24px)}
+  .wrap{max-width:1180px;margin:0 auto;padding:20px clamp(14px,3vw,28px) 64px;position:relative;z-index:1}
+  /* signature gradient headline (bright top → grey bottom) */
+  .grad{background:var(--headline);-webkit-background-clip:text;background-clip:text;color:transparent}
+
+  /* top bar */
+  .topbar{display:flex;align-items:center;gap:14px;flex-wrap:wrap;
+    padding:14px 0 18px;border-bottom:1px solid var(--border);margin-bottom:22px}
+  .brand{display:flex;align-items:center;gap:11px;margin-right:auto}
+  .brand .dot{width:30px;height:30px;border-radius:8px;
+    background:rgba(255,255,255,.04);border:1px solid var(--border-lit);
+    display:grid;place-items:center;color:var(--ink);flex:none}
+  .brand h1{font-size:16px;margin:0;font-weight:700;letter-spacing:-.02em;
+    background:var(--headline);-webkit-background-clip:text;background-clip:text;color:transparent}
+  .brand .sub{font-size:12px;color:var(--muted);margin:0}
+  .btn{font:inherit;font-size:13px;font-weight:500;border:1px solid var(--border);
+    background:rgba(255,255,255,.02);color:var(--ink);padding:8px 14px;border-radius:10px;
+    cursor:pointer;display:inline-flex;align-items:center;gap:7px;transition:background .2s,border-color .2s,color .2s}
+  .btn:hover{border-color:var(--border-lit);background:rgba(255,255,255,.06)}
+  .btn.primary{background:#181818;color:var(--ink);border-color:var(--border-lit);
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.06),0 0 24px -12px rgba(255,255,255,.5)}
+  .btn.primary:hover{background:#202020;border-color:rgba(255,255,255,.28)}
+  .btn:focus-visible,.seg button:focus-visible{outline:2px solid var(--border-lit);outline-offset:2px}
+  .seg{display:inline-flex;border:1px solid var(--border);border-radius:10px;overflow:hidden;background:rgba(255,255,255,.02)}
+  .seg button{font:inherit;font-size:12.5px;font-weight:500;border:0;background:transparent;
+    color:var(--muted);padding:8px 12px;cursor:pointer;transition:color .2s,background .2s}
+  .seg button:hover{color:var(--ink)}
+  .seg button[aria-pressed="true"]{background:rgba(255,255,255,.10);color:var(--ink)}
+
+  /* empty state */
+  .drop{border:1.5px dashed var(--border);border-radius:16px;background:var(--surface);
+    padding:clamp(28px,6vw,60px);text-align:center;transition:border-color .15s,background .15s}
+  .drop.hot{border-color:var(--data);background:var(--data-soft)}
+  .drop h2{margin:6px 0 6px;font-size:20px;letter-spacing:-.01em}
+  .drop p{color:var(--ink-2);margin:0 auto 6px;max-width:56ch}
+  .drop ol{text-align:left;max-width:52ch;margin:16px auto 20px;color:var(--ink-2);
+    font-size:14px;padding-left:20px}
+  .drop ol code{font-family:var(--mono);font-size:12.5px;background:var(--surface-2);
+    padding:1px 6px;border-radius:5px;color:var(--ink)}
+  .drop .row{display:flex;gap:10px;justify-content:center;flex-wrap:wrap;margin-top:6px}
+  .drop .paste{width:100%;max-width:560px;margin:14px auto 0;display:block;
+    font-family:var(--mono);font-size:12px;height:78px;resize:vertical;
+    border:1px solid var(--border);border-radius:10px;background:var(--surface-2);
+    color:var(--ink);padding:10px}
+  .err{color:#e5e5e5;font-size:13px;margin-top:10px;min-height:16px}
+
+  /* eyebrow / section — cve pill badge */
+  .eyebrow{display:inline-flex;align-items:center;gap:8px;font-size:11.5px;font-weight:500;
+    letter-spacing:.04em;text-transform:uppercase;color:var(--muted);margin:0 0 14px;
+    padding:6px 13px;border-radius:9999px;background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.1)}
+
+  /* KPI tiles */
+  .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:22px}
+  .tile{background:rgba(24,24,27,.5);border:1px solid var(--border);border-radius:14px;
+    padding:16px 17px;box-shadow:var(--card-glow)}
+  .tile .k{font-size:10.5px;font-weight:500;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+  .tile .v{font-size:28px;font-weight:800;letter-spacing:-.03em;margin-top:6px;color:#fff}
+  .tile .v.hero{font-size:36px}
+  .tile .m{font-size:12px;color:var(--ink-2);margin-top:3px}
+  .tile .v span.u{font-size:15px;font-weight:600;color:var(--muted);margin-left:3px}
+
+  /* chart grid */
+  .grid{display:grid;grid-template-columns:repeat(2,1fr);gap:16px}
+  @media (max-width:820px){.grid{grid-template-columns:1fr}}
+  .card{background:rgba(255,255,255,.02);border:1px solid var(--border);border-radius:16px;
+    padding:18px 18px 14px;box-shadow:var(--card-glow);min-width:0;transition:border-color .25s,background .25s}
+  .card:hover{border-color:var(--border-lit)}
+  .card.wide{grid-column:1/-1}
+  .card h3{margin:0 0 2px;font-size:14.5px;font-weight:600;letter-spacing:-.01em}
+  .card .hint{margin:0 0 10px;font-size:12px;color:var(--muted)}
+  .card .plot{width:100%;overflow:hidden}
+  .card svg{display:block;width:100%;height:auto}
+  .empty-note{color:var(--muted);font-size:13px;padding:14px 2px}
+
+  /* svg roles */
+  .grid-line{stroke:var(--grid);stroke-width:1}
+  .baseline{stroke:var(--baseline);stroke-width:1}
+  .bar{fill:var(--data)}
+  .bar.dim{fill:var(--data);opacity:.5}
+  .col{fill:var(--data)}
+  .axis-tick{fill:var(--muted);font-family:var(--mono);font-size:10.5px}
+  .val-label{fill:var(--ink-2);font-family:var(--mono);font-size:10.5px;font-weight:600}
+  .cat-label{fill:var(--ink);font-size:12px}
+  .area-fill{fill:var(--data-soft)}
+  .area-line{stroke:var(--data);stroke-width:2;fill:none}
+  .dot{fill:var(--data)}
+  .hover-target{fill:transparent;cursor:pointer}
+  /* force-directed dossier network */
+  svg.net{touch-action:none;-webkit-user-select:none;user-select:none}
+  .net-bg{fill:transparent;cursor:grab}
+  .net-node{fill:transparent;cursor:grab}
+  svg.net.dragging .net-bg,svg.net.dragging .net-node{cursor:grabbing}
+  @media (prefers-reduced-motion:reduce){ svg.net{--net-still:1} }
+  .crosshair{stroke:var(--baseline);stroke-width:1;stroke-dasharray:3 3}
+
+  /* table */
+  .tablewrap{overflow-x:auto;margin-top:4px}
+  table{border-collapse:collapse;width:100%;font-size:13px}
+  th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--border);white-space:nowrap}
+  th{color:var(--muted);font-weight:600;font-size:11.5px;letter-spacing:.04em;text-transform:uppercase;
+    cursor:pointer;user-select:none}
+  th:hover{color:var(--data)}
+  td.num,th.num{text-align:right;font-family:var(--mono);font-variant-numeric:tabular-nums}
+  td .who{display:flex;align-items:center;gap:8px}
+  td .who img{width:22px;height:22px;border-radius:50%;flex:none;background:var(--surface-2)}
+  .search{font:inherit;font-size:13px;border:1px solid var(--border);border-radius:9px;
+    background:var(--surface-2);color:var(--ink);padding:8px 12px;width:min(280px,100%)}
+  .trow-more{color:var(--muted);font-size:12px;padding:10px 2px}
+
+  /* tooltip */
+  #tip{position:fixed;z-index:50;pointer-events:none;opacity:0;transform:translateY(-4px);
+    transition:opacity .1s;background:var(--surface);color:var(--ink);border:1px solid var(--border);
+    box-shadow:var(--shadow);border-radius:9px;padding:8px 10px;font-size:12.5px;max-width:260px}
+  #tip .tt{font-weight:600;margin-bottom:2px}
+  #tip .tv{color:var(--ink-2);font-family:var(--mono);font-size:12px}
+  /* multi-account */
+  .acct-bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:16px}
+  .acct-chip{display:inline-flex;align-items:center;gap:7px;padding:5px 11px;border-radius:20px;
+    border:1px solid var(--border);background:var(--surface);color:var(--ink);cursor:pointer;font-size:13px;font-weight:600}
+  .acct-chip img{width:18px;height:18px;border-radius:50%}
+  .acct-chip.on{border-color:var(--data);color:var(--data);background:var(--data-soft)}
+  .acct-hint{color:var(--muted);font-size:12px;margin-left:4px}
+  .lookup input{width:100%;box-sizing:border-box;padding:11px 14px;border-radius:11px;border:1px solid var(--border);
+    background:var(--surface);color:var(--ink);font-size:14px;font-family:var(--mono)}
+  .lookup input:focus{outline:none;border-color:var(--data)}
+  .conn-list{margin-top:8px;display:flex;flex-direction:column;gap:2px}
+  .conn-row{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:6px 2px;border-bottom:1px solid var(--border)}
+  .conn-row .who{font-weight:600;font-size:13px}
+  .conn-meta,.conn-dots em{color:var(--muted);font-size:12px;font-style:normal}
+  .conn-dots{display:inline-flex;align-items:center;gap:4px}
+  .acct-dot{display:inline-flex;align-items:center;justify-content:center;min-width:20px;height:20px;padding:0 5px;
+    border-radius:10px;background:var(--data-soft);color:var(--data);font-size:10px;font-weight:800;text-transform:uppercase;font-style:normal}
+  .conn-empty{color:var(--muted);font-size:13px;padding:8px 2px}
+  .lk-card{border:1px solid var(--border);border-radius:12px;padding:12px 14px;margin-top:10px;background:var(--surface)}
+  .lk-head{font-weight:700;display:flex;align-items:center;gap:8px;margin-bottom:6px}
+  .lk-id{font-family:var(--mono);font-size:11px;color:var(--muted);font-weight:400}
+  .lk-badge{margin-left:auto;font-size:11px;background:rgba(255,255,255,.10);color:var(--ink);border:1px solid var(--border);padding:2px 8px;border-radius:9px}
+  .lk-acct{display:flex;gap:10px;padding:3px 0;font-size:13px}
+  .lk-from{min-width:120px;font-weight:600;color:var(--data)}
+  .lk-bits{color:var(--ink-2)}
+  .hidden{display:none!important}
+  /* full-screen everyone-view: the whole point is room, so it takes the viewport */
+  #full-overlay{position:fixed;inset:0;z-index:9999;background:var(--page);display:flex;flex-direction:column}
+  #full-overlay.hidden{display:none!important}
+  #full-bar{display:flex;gap:12px;align-items:center;flex-wrap:wrap;padding:10px 16px;border-bottom:1px solid var(--line);flex:none}
+  #full-bar h3{margin:0;font-size:15px}
+  #full-plot{flex:1;min-height:0;overflow:hidden}
+  #full-plot svg{display:block}
+  .foot{margin-top:30px;color:var(--muted);font-size:12px;text-align:center}
+  .foot code{font-family:var(--mono);background:var(--surface);padding:1px 6px;border-radius:5px;border:1px solid var(--border)}
+</style>
+
+<div class="wrap">
+  <div class="topbar">
+    <div class="brand">
+      <span class="dot" aria-hidden="true">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round">
+          <path d="M4 14a8 8 0 0 1 16 0"/><path d="M7.5 14a4.5 4.5 0 0 1 9 0"/><circle cx="12" cy="14" r="1.4" fill="currentColor" stroke="none"/>
+        </svg>
+      </span>
+      <div>
+        <h1>Xicord Dashboard</h1>
+        <p class="sub" id="subline">Load a Xicord cache to build graphs — nothing leaves your browser</p>
+      </div>
+    </div>
+    <div class="seg" id="range" role="group" aria-label="Date range" hidden>
+      <button data-r="all" aria-pressed="true">All</button>
+      <button data-r="90">90d</button>
+      <button data-r="30">30d</button>
+      <button data-r="7">7d</button>
+    </div>
+    <button class="btn" id="loadBtn"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 15V3m0 12-4-4m4 4 4-4"/><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>Load cache</button>
+    <button class="btn" id="themeBtn" aria-label="Toggle theme"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z"/></svg></button>
+    <input type="file" id="file" accept="application/json,.json" class="hidden">
+  </div>
+
+  <!-- EMPTY STATE -->
+  <div id="empty">
+    <div class="drop" id="drop">
+      <h2>Drop your Xicord cache here</h2>
+      <p>A private, offline view of the data your Xicord plugins collect — voice history, people, channels, traits and mutuals.</p>
+      <ol>
+        <li>Enable the <b>Xicord Cache</b> plugin in the Mod Menu.</li>
+        <li>Click its icon in the Xicord button row (or run <code>/xicord-cache</code>).</li>
+        <li>Hit <b>Download .json</b>, then drop the file here — or paste the JSON below.</li>
+      </ol>
+      <div class="row">
+        <button class="btn primary" id="chooseBtn">Choose file…</button>
+      </div>
+      <textarea class="paste" id="paste" placeholder="…or paste cache JSON here"></textarea>
+      <div class="err" id="err"></div>
+    </div>
+  </div>
+
+  <!-- DASHBOARD -->
+  <div id="dash" class="hidden">
+    <div class="acct-bar" id="acct-bar"></div>
+
+    <div id="acct-section" class="hidden">
+      <p class="eyebrow" style="margin-top:6px">Your accounts, cross-referenced</p>
+      <div class="lookup">
+        <input id="lookup" type="text" placeholder="Look up a username or user ID across all your accounts…" autocomplete="off" spellcheck="false">
+      </div>
+      <div id="lookup-results" class="conn-list"></div>
+      <div class="grid" style="margin-top:14px">
+        <div class="card"><h3>Direct links</h3><p class="hint">One of your accounts recorded another</p><div id="conn-direct" class="conn-list"></div></div>
+        <div class="card"><h3>People across accounts</h3><p class="hint">Seen by two or more of your accounts</p><div id="conn-people" class="conn-list"></div></div>
+        <div class="card"><h3>Shared servers</h3><p class="hint">Guilds more than one account is in</p><div id="conn-guilds" class="conn-list"></div></div>
+      </div>
+    </div>
+
+    <div class="kpis" id="kpis"></div>
+
+    <p class="eyebrow">Voice activity</p>
+    <div class="grid">
+      <div class="card wide"><h3>Sessions over time</h3><p class="hint" id="ts-hint"></p><div class="plot" id="ch-timeline"></div></div>
+      <div class="card"><h3>Top people by voice time</h3><p class="hint">Total tracked time in voice</p><div class="plot" id="ch-people"></div></div>
+      <div class="card"><h3>Busiest channels</h3><p class="hint">Total tracked time per channel</p><div class="plot" id="ch-channels"></div></div>
+      <div class="card"><h3>Activity by hour</h3><p class="hint">When sessions start (your local time)</p><div class="plot" id="ch-hours"></div></div>
+      <div class="card"><h3>Activity by weekday</h3><p class="hint">When sessions start</p><div class="plot" id="ch-weekday"></div></div>
+    </div>
+
+    <p class="eyebrow" style="margin-top:26px">Connections</p>
+    <div class="grid">
+      <div class="card"><h3>Seen together most</h3><p class="hint">Pairs whose voice sessions overlap</p><div class="plot" id="ch-duos"></div></div>
+      <div class="card"><h3>Traits</h3><p class="hint">People tagged per trait</p><div class="plot" id="ch-traits"></div></div>
+    </div>
+
+    <div id="msg-section" class="hidden">
+      <p class="eyebrow" style="margin-top:26px">Messages &amp; presence</p>
+      <div class="grid">
+        <div class="card wide"><h3>Messages over time</h3><p class="hint" id="msg-hint"></p><div class="plot" id="ch-msgtime"></div></div>
+        <div class="card"><h3>Top people by messages</h3><p class="hint">From people you follow</p><div class="plot" id="ch-msgpeople"></div></div>
+        <div class="card"><h3>Busiest channels (messages)</h3><p class="hint">Where they talk</p><div class="plot" id="ch-msgchannels"></div></div>
+        <div class="card wide"><h3>Most time online</h3><p class="hint">Friends' recorded online time</p><div class="plot" id="ch-online"></div></div>
+      </div>
+    </div>
+
+    <div id="dossier-section" class="hidden">
+      <p class="eyebrow" style="margin-top:26px">Dossier — voice companions</p>
+      <div class="card wide">
+        <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:6px">
+          <h3 style="margin:0">Who they call with</h3>
+          <select class="search" id="dossier-select" style="width:auto;min-width:180px"></select>
+          <button class="btn" id="fullDossierBtn" title="Everyone at once, full screen">Full dossier — everyone</button>
+          <span class="hint" id="dossier-meta" style="margin:0"></span>
+        </div>
+        <p class="hint" style="margin-top:0">Public-server voice channels only · dot size = times seen together · line weight = shared calls</p>
+        <div class="plot" id="ch-dossier"></div>
+        <div id="dossier-games"></div>
+      </div>
+    </div>
+
+    <div id="full-overlay" class="hidden" role="dialog" aria-modal="true" aria-label="Full dossier — everyone">
+      <div id="full-bar">
+        <h3>Full dossier — everyone</h3>
+        <label class="hint" style="margin:0">Max people
+          <input class="search" id="full-limit" type="number" min="10" max="4000" step="10"
+                 style="width:88px;margin-left:6px" value="300">
+        </label>
+        <span class="hint" id="full-meta" style="margin:0"></span>
+        <button class="btn" id="full-close" style="margin-left:auto">Close (Esc)</button>
+      </div>
+      <div id="full-plot"></div>
+    </div>
+
+    <p class="eyebrow" style="margin-top:26px">Sessions</p>
+    <div class="card wide">
+      <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
+        <input class="search" id="search" placeholder="Search person or channel…">
+        <span class="hint" id="tbl-count" style="margin:0"></span>
+      </div>
+      <div class="tablewrap"><table id="tbl">
+        <thead><tr>
+          <th data-k="user">Person</th>
+          <th data-k="channel">Channel</th>
+          <th data-k="join" class="num">Started</th>
+          <th data-k="dur" class="num">Duration</th>
+        </tr></thead>
+        <tbody id="tbody"></tbody>
+      </table></div>
+      <div class="trow-more" id="tbl-more"></div>
+    </div>
+
+    <p class="foot">Exported <span id="foot-when"></span> · everything is computed locally in this page · reload to clear</p>
+  </div>
+</div>
+
+<div id="tip"></div>
+
+<script>
+(function(){
+  "use strict";
+  var $=function(s,r){return (r||document).querySelector(s);};
+  var cache=null, range="all", tableSort={k:"join",dir:-1}, tableQuery="", dossierTarget=null;
+  // Local multi-account: several of YOUR OWN exports, cross-referenced in-browser.
+  // Nothing is uploaded; this is all client-side over files you loaded yourself.
+  var accounts=[], activeIdx=0, lookupQuery="";
+  function acctId(d){ return (d.self&&d.self.id)||("acct-"+(d.exportedAt||0)); }
+  function acctName(d){ return (d.self&&d.self.username)||"unknown account"; }
+
+  /* ---------- theme ---------- */
+  var themeBtn=$("#themeBtn");
+  themeBtn.addEventListener("click",function(){
+    var cur=document.documentElement.getAttribute("data-theme");
+    var next= cur==="dark" ? "light" : cur==="light" ? "dark"
+      : (matchMedia("(prefers-color-scheme: dark)").matches ? "light" : "dark");
+    document.documentElement.setAttribute("data-theme",next);
+    if(cache) render(); // re-measure any width-dependent layout
+  });
+
+  /* ---------- loading ---------- */
+  var drop=$("#drop"), fileInput=$("#file"), errEl=$("#err");
+  function setErr(m){errEl.textContent=m||"";}
+  $("#loadBtn").addEventListener("click",function(){fileInput.click();});
+  $("#chooseBtn").addEventListener("click",function(){fileInput.click();});
+  fileInput.addEventListener("change",function(e){
+    var f=e.target.files&&e.target.files[0]; if(f) readFile(f); fileInput.value="";
+  });
+  function readFile(f){
+    var r=new FileReader();
+    r.onload=function(){ ingest(r.result); };
+    r.onerror=function(){ setErr("Could not read that file."); };
+    r.readAsText(f);
+  }
+  ["dragenter","dragover"].forEach(function(ev){
+    drop.addEventListener(ev,function(e){e.preventDefault();drop.classList.add("hot");});
+    document.addEventListener(ev,function(e){e.preventDefault();});
+  });
+  ["dragleave","drop"].forEach(function(ev){
+    drop.addEventListener(ev,function(e){e.preventDefault();drop.classList.remove("hot");});
+  });
+  drop.addEventListener("drop",function(e){
+    // accept several account exports dropped at once
+    var files=e.dataTransfer&&e.dataTransfer.files;
+    if(files) for(var i=0;i<files.length;i++) readFile(files[i]);
+  });
+  // let the file picker take multiple too
+  fileInput.setAttribute("multiple","");
+  $("#acct-bar").addEventListener("click",function(e){
+    var b=e.target.closest&&e.target.closest(".acct-chip"); if(b) switchAccount(Number(b.getAttribute("data-i")));
+  });
+  $("#lookup").addEventListener("input",function(e){ lookupQuery=e.target.value; renderLookup(); });
+  var pasteEl=$("#paste");
+  pasteEl.addEventListener("input",function(){
+    var v=pasteEl.value.trim(); if(v.length>40) ingest(v);
+  });
+  function ingest(text){
+    var data; try{ data=JSON.parse(text); }catch(e){ setErr("That isn't valid JSON."); return; }
+    if(!data || typeof data!=="object" || !("xicordCache" in data)){
+      setErr("This doesn't look like a Xicord cache (missing \"xicordCache\")."); return;
+    }
+    setErr(""); var norm=normalize(data);
+    // Accumulate: loading another of your accounts adds it rather than replacing.
+    // Re-loading the same account (same self id) refreshes it in place.
+    var id=acctId(norm), at=-1;
+    for(var i=0;i<accounts.length;i++){ if(acctId(accounts[i])===id){ at=i; break; } }
+    if(at>=0){ accounts[at]=norm; activeIdx=at; } else { accounts.push(norm); activeIdx=accounts.length-1; }
+    cache=accounts[activeIdx];
+    $("#empty").classList.add("hidden");
+    $("#dash").classList.remove("hidden");
+    $("#range").hidden=false;
+    var when= cache.exportedAt ? new Date(cache.exportedAt).toLocaleString() : "recently";
+    $("#foot-when").textContent=when;
+    $("#subline").textContent = accounts.length>1
+      ? (accounts.length+" accounts loaded — nothing leaves your browser")
+      : (cache.self ? ("Signed in as "+cache.self.username) : "Loaded cache");
+    render();
+  }
+  function switchAccount(i){ if(i<0||i>=accounts.length)return; activeIdx=i; cache=accounts[i]; dossierTarget=null; render(); }
+  function normalize(d){
+    d.users=d.users||{}; d.channels=d.channels||{}; d.guilds=d.guilds||{};
+    d.history=Array.isArray(d.history)?d.history:[];
+    d.traits=Array.isArray(d.traits)?d.traits:[];
+    d.orbitLog=Array.isArray(d.orbitLog)?d.orbitLog:[];
+    d.mutuals=Array.isArray(d.mutuals)?d.mutuals:[];
+    var m=d.messages||{}; d.messages={since:m.since||0,daily:m.daily||{},byUser:m.byUser||{},byChannel:m.byChannel||{}};
+    d.presence=Array.isArray(d.presence)?d.presence:[];
+    d.dossiers=(d.dossiers&&typeof d.dossiers==="object")?d.dossiers:{};
+    return d;
+  }
+
+  /* ---------- helpers ---------- */
+  function uname(id){ var u=cache.users[id]; return (u&&u.username)||("user "+String(id).slice(0,6)); }
+  function uavatar(id){ var u=cache.users[id]; return (u&&u.avatar)||""; }
+  function cname(id){
+    var c=cache.channels[id];
+    if(!c) return "channel "+String(id).slice(0,6);
+    var g=c.guildId?cache.guilds[c.guildId]:null;
+    return (c.name||"channel")+(g?(" · "+g.name):"");
+  }
+  function fmtDur(ms){
+    if(ms<0)ms=0; var s=Math.round(ms/1000);
+    if(s<60) return s+"s";
+    var m=Math.round(s/60); if(m<60) return m+"m";
+    var h=Math.floor(m/60), mm=m%60; if(h<48) return h+"h "+(mm?mm+"m":"").trim();
+    return Math.round(h/24)+"d";
+  }
+  function fmtHoursParts(ms){ var h=ms/3600000; return h>=10?{v:h.toFixed(0),u:"h"}:{v:h.toFixed(1),u:"h"}; }
+  function fmtDate(ts){ try{return new Date(ts).toLocaleString([], {month:"short",day:"numeric",hour:"2-digit",minute:"2-digit"});}catch(e){return String(ts);} }
+  function dayKey(ts){ var d=new Date(ts); return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0"); }
+
+  function filteredSessions(){
+    var s=cache.history.filter(function(x){return x&&x.userId&&x.channelId&&typeof x.join==="number";});
+    if(range!=="all"){
+      var cut=Date.now()-parseInt(range,10)*86400000;
+      s=s.filter(function(x){return x.join>=cut;});
+    }
+    return s;
+  }
+
+  /* ---------- tooltip ---------- */
+  var tip=$("#tip");
+  function showTip(html,x,y){ tip.innerHTML=html; tip.style.opacity="1";
+    var pad=14; var w=tip.offsetWidth,h=tip.offsetHeight;
+    var left=x+pad; if(left+w>innerWidth-8) left=x-w-pad;
+    var top=y-h-pad; if(top<8) top=y+pad;
+    tip.style.left=left+"px"; tip.style.top=top+"px"; }
+  function hideTip(){ tip.style.opacity="0"; }
+
+  /* ---------- svg utils ---------- */
+  var NS="http://www.w3.org/2000/svg";
+  function el(name,attrs){ var e=document.createElementNS(NS,name);
+    for(var k in attrs) e.setAttribute(k,attrs[k]); return e; }
+  function clear(node){ while(node.firstChild) node.removeChild(node.firstChild); }
+  function svgRoot(host,w,h){ clear(host); var s=el("svg",{viewBox:"0 0 "+w+" "+h,role:"img"});
+    host.appendChild(s); return s; }
+  function widthOf(host){ return Math.max(280, Math.floor(host.getBoundingClientRect().width)||480); }
+
+  /* ---------- horizontal bar chart ---------- */
+  function barH(host, rows, opts){
+    opts=opts||{};
+    if(!rows.length){ host.innerHTML='<div class="empty-note">No data yet.</div>'; return; }
+    var W=widthOf(host), rowH=30, padT=6, padB=6, labelW=Math.min(190, Math.round(W*0.42));
+    var gap=Math.min(labelW*0.4, 130); var valPad=52;
+    var plotX=labelW+10, plotW=W-plotX-valPad, H=padT+padB+rows.length*rowH;
+    var max=Math.max.apply(null,rows.map(function(r){return r.value;}))||1;
+    var s=svgRoot(host,W,H);
+    s.appendChild(el("line",{class:"baseline",x1:plotX,y1:padT,x2:plotX,y2:H-padB}));
+    rows.forEach(function(r,i){
+      var y=padT+i*rowH, bh=16, by=y+(rowH-bh)/2;
+      var bw=Math.max(2, Math.round(plotW*(r.value/max)));
+      // category label
+      var lab=el("text",{class:"cat-label",x:plotX-10,y:by+bh-3,"text-anchor":"end"});
+      lab.textContent=r.label; s.appendChild(lab);
+      var rect=el("rect",{class:"bar"+(opts.dim&&i>0?" dim":""),x:plotX,y:by,width:bw,height:bh,rx:4});
+      s.appendChild(rect);
+      var vt=el("text",{class:"val-label",x:plotX+bw+7,y:by+bh-3});
+      vt.textContent=r.disp!=null?r.disp:r.value; s.appendChild(vt);
+      // hover
+      var ht=el("rect",{class:"hover-target",x:0,y:y,width:W,height:rowH});
+      ht.addEventListener("mousemove",function(ev){ showTip('<div class="tt">'+esc(r.full||r.label)+'</div><div class="tv">'+esc(r.tip!=null?r.tip:(r.disp!=null?r.disp:r.value))+'</div>',ev.clientX,ev.clientY); });
+      ht.addEventListener("mouseleave",hideTip);
+      s.appendChild(ht);
+    });
+  }
+
+  /* ---------- column chart (hours / weekday) ---------- */
+  function columns(host, rows, opts){
+    opts=opts||{};
+    if(!rows.length){ host.innerHTML='<div class="empty-note">No data yet.</div>'; return; }
+    var W=widthOf(host), H=180, padL=10, padR=8, padT=10, padB=26;
+    var plotW=W-padL-padR, plotH=H-padT-padB;
+    var max=Math.max.apply(null,rows.map(function(r){return r.value;}))||1;
+    var s=svgRoot(host,W,H);
+    // gridlines (3)
+    for(var g=1;g<=3;g++){ var gy=padT+plotH*(1-g/3);
+      s.appendChild(el("line",{class:"grid-line",x1:padL,y1:gy,x2:W-padR,y2:gy})); }
+    s.appendChild(el("line",{class:"baseline",x1:padL,y1:padT+plotH,x2:W-padR,y2:padT+plotH}));
+    var n=rows.length, slot=plotW/n, bw=Math.min(slot*0.66, 34);
+    rows.forEach(function(r,i){
+      var cx=padL+slot*(i+0.5), x=cx-bw/2;
+      var bh=Math.max(r.value>0?2:0, Math.round(plotH*(r.value/max)));
+      var y=padT+plotH-bh;
+      if(bh>0) s.appendChild(el("rect",{class:"col",x:x,y:y,width:bw,height:bh,rx:3}));
+      if(r.tick!=null && (n<=12 || i%2===0 || i===n-1)){
+        var t=el("text",{class:"axis-tick",x:cx,y:H-9,"text-anchor":"middle"}); t.textContent=r.tick; s.appendChild(t);
+      }
+      var ht=el("rect",{class:"hover-target",x:padL+slot*i,y:padT,width:slot,height:plotH});
+      ht.addEventListener("mousemove",function(ev){ showTip('<div class="tt">'+esc(r.label)+'</div><div class="tv">'+r.value+' session'+(r.value===1?"":"s")+'</div>',ev.clientX,ev.clientY); });
+      ht.addEventListener("mouseleave",hideTip); s.appendChild(ht);
+    });
+  }
+
+  /* ---------- area timeline with crosshair ---------- */
+  function area(host, pts, opts){
+    opts=opts||{}; var unit=opts.unit||"session";
+    if(pts.length<2){ host.innerHTML='<div class="empty-note">Not enough dated data to plot a trend.</div>'; return; }
+    var W=widthOf(host), H=210, padL=38, padR=14, padT=12, padB=26;
+    var plotW=W-padL-padR, plotH=H-padT-padB;
+    var max=Math.max.apply(null,pts.map(function(p){return p.v;}))||1;
+    var minT=pts[0].t, maxT=pts[pts.length-1].t, span=Math.max(1,maxT-minT);
+    var X=function(t){return padL+plotW*((t-minT)/span);};
+    var Y=function(v){return padT+plotH*(1-v/max);};
+    var s=svgRoot(host,W,H);
+    for(var g=0;g<=2;g++){ var gv=Math.round(max*g/2); var gy=Y(gv);
+      s.appendChild(el("line",{class:"grid-line",x1:padL,y1:gy,x2:W-padR,y2:gy}));
+      var lab=el("text",{class:"axis-tick",x:padL-8,y:gy+3,"text-anchor":"end"}); lab.textContent=gv; s.appendChild(lab); }
+    // area + line
+    var dl="",da="";
+    pts.forEach(function(p,i){ var x=X(p.t),y=Y(p.v); dl+=(i?"L":"M")+x+" "+y+" "; });
+    da="M"+X(pts[0].t)+" "+(padT+plotH)+" "+dl.replace(/^M/,"L")+"L"+X(pts[pts.length-1].t)+" "+(padT+plotH)+" Z";
+    s.appendChild(el("path",{class:"area-fill",d:da}));
+    s.appendChild(el("path",{class:"area-line",d:dl}));
+    // x labels (first/mid/last)
+    [0,Math.floor(pts.length/2),pts.length-1].forEach(function(i,k){
+      var p=pts[i]; var t=el("text",{class:"axis-tick",x:X(p.t),y:H-9,
+        "text-anchor":k===0?"start":k===2?"end":"middle"});
+      t.textContent=new Date(p.t).toLocaleDateString([], {month:"short",day:"numeric"}); s.appendChild(t);
+    });
+    // crosshair
+    var cx=el("line",{class:"crosshair",x1:padL,y1:padT,x2:padL,y2:padT+plotH,opacity:0});
+    var dot=el("circle",{class:"dot",r:4,opacity:0}); s.appendChild(cx); s.appendChild(dot);
+    var overlay=el("rect",{class:"hover-target",x:padL,y:padT,width:plotW,height:plotH});
+    overlay.addEventListener("mousemove",function(ev){
+      var rect=s.getBoundingClientRect(); var scale=W/rect.width;
+      var mx=(ev.clientX-rect.left)*scale;
+      var tt=minT+span*Math.min(1,Math.max(0,(mx-padL)/plotW));
+      var best=pts[0],bd=Infinity;
+      for(var i=0;i<pts.length;i++){var d=Math.abs(pts[i].t-tt);if(d<bd){bd=d;best=pts[i];}}
+      var x=X(best.t),y=Y(best.v);
+      cx.setAttribute("x1",x);cx.setAttribute("x2",x);cx.setAttribute("opacity",1);
+      dot.setAttribute("cx",x);dot.setAttribute("cy",y);dot.setAttribute("opacity",1);
+      showTip('<div class="tt">'+new Date(best.t).toLocaleDateString([], {weekday:"short",month:"short",day:"numeric"})+'</div><div class="tv">'+best.v+' '+unit+(best.v===1?"":"s")+'</div>',ev.clientX,ev.clientY);
+    });
+    overlay.addEventListener("mouseleave",function(){cx.setAttribute("opacity",0);dot.setAttribute("opacity",0);hideTip();});
+    s.appendChild(overlay);
+  }
+
+  function esc(s){ return String(s).replace(/[&<>"]/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c];}); }
+
+  /* ---------- aggregations ---------- */
+  function sumBy(sessions, keyFn){
+    var m={}; sessions.forEach(function(s){ var k=keyFn(s); var d=Math.max(0,(s.leave||s.join)-s.join);
+      m[k]=(m[k]||0)+d; }); return m; }
+  function topEntries(map, n){ return Object.keys(map).map(function(k){return [k,map[k]];})
+      .sort(function(a,b){return b[1]-a[1];}).slice(0,n); }
+
+  function coPresence(sessions){
+    // sweep per channel; count overlapping pairs
+    var byCh={}; sessions.forEach(function(s){ (byCh[s.channelId]=byCh[s.channelId]||[]).push(s); });
+    var pairs={};
+    Object.keys(byCh).forEach(function(ch){
+      var list=byCh[ch].slice().sort(function(a,b){return a.join-b.join;});
+      var active=[];
+      list.forEach(function(s){
+        var end=Math.max(s.join,s.leave||s.join);
+        active=active.filter(function(a){return (Math.max(a.join,a.leave||a.join))>s.join;});
+        active.forEach(function(a){
+          if(a.userId===s.userId) return;
+          var lo=a.userId<s.userId?a.userId:s.userId, hi=a.userId<s.userId?s.userId:a.userId;
+          var key=lo+"|"+hi; pairs[key]=(pairs[key]||0)+1;
+        });
+        active.push(s);
+      });
+    });
+    return Object.keys(pairs).map(function(k){var p=k.split("|");return {a:p[0],b:p[1],n:pairs[k]};})
+      .sort(function(x,y){return y.n-x.n;});
+  }
+
+  /* ---------- multi-account correlation (pure) ---------- */
+  // A person's data footprint inside ONE account cache.
+  function footprint(d, id){
+    var fp={ sessions:0, voiceMs:0, messages:0, companions:0, guilds:{}, online:0, isSelf:false, name:"" };
+    if(d.self && d.self.id===id) fp.isSelf=true;
+    var u=d.users&&d.users[id]; if(u&&u.username) fp.name=u.username;
+    (d.history||[]).forEach(function(s){
+      if(!s||s.userId!==id)return; fp.sessions++;
+      fp.voiceMs+=Math.max(0,(s.leave||s.join)-s.join);
+      var c=d.channels&&d.channels[s.channelId]; if(c&&c.guildId) fp.guilds[c.guildId]=1;
+    });
+    if(d.messages&&d.messages.byUser&&d.messages.byUser[id]) fp.messages=d.messages.byUser[id];
+    (d.presence||[]).forEach(function(p){ if(p&&p.userId===id) fp.online+=Math.max(0,(p.end||p.start)-p.start); });
+    var dossier=d.dossiers&&d.dossiers[id];
+    if(dossier&&dossier.companions) fp.companions=Object.keys(dossier.companions).length;
+    // also: this person shows up as a companion in some OTHER target's dossier here
+    if(!fp.companions && d.dossiers){ for(var t in d.dossiers){ var comp=d.dossiers[t].companions; if(comp&&comp[id]){ fp.seenAsCompanion=true; break; } } }
+    return fp;
+  }
+  function hasData(fp){ return fp.sessions||fp.messages||fp.companions||fp.online||fp.isSelf||fp.seenAsCompanion; }
+
+  // Everyone who appears in >= 2 of your accounts' data. These shared people (and
+  // guilds) ARE the connections between your accounts.
+  function crossAccountLinks(accts){
+    var people={}, guilds={};
+    accts.forEach(function(d,ai){
+      var ids={};
+      (d.history||[]).forEach(function(s){ if(s&&s.userId) ids[s.userId]=1; });
+      if(d.messages&&d.messages.byUser) for(var mu in d.messages.byUser) ids[mu]=1;
+      if(d.dossiers) for(var t in d.dossiers){ ids[t]=1; var comp=d.dossiers[t].companions||{}; for(var c in comp) ids[c]=1; }
+      (d.presence||[]).forEach(function(p){ if(p&&p.userId) ids[p.userId]=1; });
+      Object.keys(ids).forEach(function(id){ (people[id]=people[id]||{})[ai]=1; });
+      Object.keys(d.guilds||{}).forEach(function(g){ (guilds[g]=guilds[g]||{})[ai]=1; });
+    });
+    var selfIds={}; accts.forEach(function(d,ai){ if(d.self&&d.self.id) selfIds[d.self.id]=ai; });
+    function shared(map){
+      return Object.keys(map).map(function(id){ return {id:id, accts:Object.keys(map[id]).map(Number)}; })
+        .filter(function(x){return x.accts.length>=2;})
+        .sort(function(a,b){return b.accts.length-a.accts.length;});
+    }
+    // direct links: one of your accounts has recorded ANOTHER of your accounts
+    var direct=[];
+    Object.keys(selfIds).forEach(function(sid){
+      accts.forEach(function(d,ai){
+        if(d.self&&d.self.id===sid)return;
+        var fp=footprint(d,sid); if(hasData(fp)) direct.push({ selfAcct:selfIds[sid], seenIn:ai, id:sid, fp:fp });
+      });
+    });
+    return { people:shared(people), guilds:shared(guilds), direct:direct };
+  }
+
+  // Everything all loaded accounts know about one person (by id or username).
+  function lookupAcross(accts, query){
+    var qraw=String(query||"").trim(); if(!qraw) return null;
+    var q=qraw.toLowerCase(); var ids={};
+    accts.forEach(function(d){
+      // exact id match against any known id (ids are opaque, not always all-digit)
+      if((d.users&&d.users[qraw]) || (d.self&&d.self.id===qraw)) ids[qraw]=1;
+      if(/^\d{5,}$/.test(qraw)) ids[qraw]=1;
+      for(var id in (d.users||{})){ var u=d.users[id]; if(u&&u.username&&u.username.toLowerCase().indexOf(q)>=0) ids[id]=1; }
+      if(d.self&&d.self.username&&d.self.username.toLowerCase().indexOf(q)>=0&&d.self.id) ids[d.self.id]=1;
+    });
+    return Object.keys(ids).map(function(id){
+      var per=accts.map(function(d,ai){ return {acct:ai, fp:footprint(d,id)}; }).filter(function(x){return hasData(x.fp);});
+      var name=""; per.forEach(function(x){ if(!name&&x.fp.name) name=x.fp.name; });
+      return { id:id, name:name, per:per };
+    }).filter(function(r){return r.per.length;})
+      .sort(function(a,b){return b.per.length-a.per.length;});
+  }
+
+  /* ---------- render ---------- */
+  function render(){
+    renderAccounts();
+    var S=filteredSessions();
+
+    /* KPIs */
+    var totalMs=S.reduce(function(a,s){return a+Math.max(0,(s.leave||s.join)-s.join);},0);
+    var users={}, chans={}; S.forEach(function(s){users[s.userId]=1;chans[s.channelId]=1;});
+    var span="—";
+    if(S.length){ var mn=Math.min.apply(null,S.map(function(s){return s.join;}));
+      var mx=Math.max.apply(null,S.map(function(s){return s.join;}));
+      var days=Math.max(1,Math.round((mx-mn)/86400000)); span=days+ (days===1?" day":" days"); }
+    var hero=fmtHoursParts(totalMs);
+    var kpis=[
+      {k:"Voice time",v:hero.v,u:hero.u,m:"across "+S.length+" sessions",hero:true},
+      {k:"Sessions",v:S.length,m:range==="all"?"all recorded":"last "+range+" days"},
+      {k:"People",v:Object.keys(users).length,m:"seen in voice"},
+      {k:"Channels",v:Object.keys(chans).length,m:"visited"},
+      {k:"Span",v:span.split(" ")[0],u:span.split(" ")[1]||"",m:"first → last session"}
+    ];
+    $("#kpis").innerHTML=kpis.map(function(t){
+      return '<div class="tile"><div class="k">'+esc(t.k)+'</div><div class="v'+(t.hero?" hero":"")+'">'
+        +esc(String(t.v))+(t.u?'<span class="u">'+esc(t.u)+'</span>':'')+'</div><div class="m">'+esc(t.m)+'</div></div>';
+    }).join("");
+
+    /* timeline */
+    var byDay={}; S.forEach(function(s){ var k=dayKey(s.join); byDay[k]=(byDay[k]||0)+1; });
+    var days=Object.keys(byDay).sort();
+    var pts=days.map(function(k){ var d=k.split("-"); return {t:new Date(+d[0],+d[1]-1,+d[2]).getTime(), v:byDay[k]}; });
+    $("#ts-hint").textContent = pts.length? (pts.length+" active days") : "";
+    area($("#ch-timeline"),pts);
+
+    /* people */
+    var pu=topEntries(sumBy(S,function(s){return s.userId;}),10).map(function(e){
+      return {label:trunc(uname(e[0]),22), full:uname(e[0]), value:e[1], disp:fmtDur(e[1]), tip:fmtDur(e[1])+" in voice"}; });
+    barH($("#ch-people"),pu,{dim:true});
+
+    /* channels */
+    var pc=topEntries(sumBy(S,function(s){return s.channelId;}),8).map(function(e){
+      return {label:trunc(cname(e[0]),26), full:cname(e[0]), value:e[1], disp:fmtDur(e[1]), tip:fmtDur(e[1])+" total"}; });
+    barH($("#ch-channels"),pc,{dim:true});
+
+    /* hours */
+    var hrs=new Array(24).fill(0); S.forEach(function(s){ hrs[new Date(s.join).getHours()]++; });
+    columns($("#ch-hours"),hrs.map(function(v,i){return {value:v,label:i+":00",tick:i};}));
+
+    /* weekday */
+    var wd=new Array(7).fill(0), names=["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+    S.forEach(function(s){ wd[new Date(s.join).getDay()]++; });
+    var order=[1,2,3,4,5,6,0];
+    columns($("#ch-weekday"),order.map(function(i){return {value:wd[i],label:names[i],tick:names[i]};}));
+
+    /* duos */
+    var duos=coPresence(S).slice(0,8).map(function(d){
+      return {label:trunc(uname(d.a)+" + "+uname(d.b),30), full:uname(d.a)+" + "+uname(d.b),
+        value:d.n, disp:d.n+"×", tip:"overlapped in "+d.n+" session"+(d.n===1?"":"s")}; });
+    barH($("#ch-duos"),duos,{dim:true});
+
+    /* traits */
+    var tr=(cache.traits||[]).map(function(t){return {label:trunc(t.name,22),full:t.name,
+      value:(t.users||[]).length, disp:(t.users||[]).length}; })
+      .filter(function(t){return t.value>0;}).sort(function(a,b){return b.value-a.value;}).slice(0,10);
+    barH($("#ch-traits"),tr,{dim:true});
+
+    renderMessages();
+    renderDossier();
+    renderTable(S);
+    // Opened straight from the plugin's "Open in dashboard" button, which links to
+    // #full precisely because the in-Discord graph is too heavy to animate.
+    if(location.hash==="#full" && $("#full-overlay").classList.contains("hidden")) openFullDossier();
+    else if(!$("#full-overlay").classList.contains("hidden")) renderFullDossier(); // live refresh
+  }
+
+  /* ---------- multi-account UI ---------- */
+  function renderAccounts(){
+    var bar=$("#acct-bar"), sec=$("#acct-section");
+    // account switcher chips (always shown once anything is loaded)
+    bar.innerHTML=accounts.map(function(d,i){
+      var av=d.self&&d.self.avatar;
+      return '<button class="acct-chip'+(i===activeIdx?' on':'')+'" data-i="'+i+'">'
+        +(av?'<img src="'+esc(av)+'" alt="">':'')+'<span>'+esc(acctName(d))+'</span></button>';
+    }).join("")+'<span class="acct-hint">'+(accounts.length>1?'viewing '+esc(acctName(cache)):'load another export to correlate your accounts')+'</span>';
+
+    if(accounts.length<2){ sec.classList.add("hidden"); return; }
+    sec.classList.remove("hidden");
+
+    var links=crossAccountLinks(accounts);
+
+    // direct links: one account literally recorded another
+    var directHtml=links.direct.length ? links.direct.map(function(x){
+      return '<div class="conn-row"><span class="who"><b>'+esc(acctName(accounts[x.seenIn]))+'</b> recorded <b>'
+        +esc(acctName(accounts[x.selfAcct]))+'</b></span><span class="conn-meta">'
+        +(x.fp.sessions?x.fp.sessions+' voice · ':'')+(x.fp.messages?x.fp.messages+' msgs · ':'')
+        +(x.fp.online?fmtDur(x.fp.online)+' online':'seen')+'</span></div>';
+    }).join("") : '<div class="conn-empty">No account has directly recorded another. Shared people below still link them.</div>';
+
+    // people seen by >= 2 of your accounts
+    var ppl=links.people.slice(0,40).map(function(x){
+      var chips=x.accts.map(function(ai){return '<i class="acct-dot" title="'+esc(acctName(accounts[ai]))+'">'+esc(acctName(accounts[ai]).slice(0,2))+'</i>';}).join("");
+      return '<div class="conn-row"><span class="who">'+esc(anyName(x.id))+'</span><span class="conn-dots">'
+        +chips+'<em>'+x.accts.length+' of your accounts</em></span></div>';
+    }).join("") || '<div class="conn-empty">No person appears across two of your accounts yet.</div>';
+
+    var gld=links.guilds.slice(0,20).map(function(x){
+      var chips=x.accts.map(function(ai){return '<i class="acct-dot" title="'+esc(acctName(accounts[ai]))+'">'+esc(acctName(accounts[ai]).slice(0,2))+'</i>';}).join("");
+      return '<div class="conn-row"><span class="who">'+esc(anyGuild(x.id))+'</span><span class="conn-dots">'+chips+'</span></div>';
+    }).join("") || '<div class="conn-empty">No shared servers.</div>';
+
+    $("#conn-direct").innerHTML=directHtml;
+    $("#conn-people").innerHTML=ppl;
+    $("#conn-guilds").innerHTML=gld;
+
+    renderLookup();
+  }
+  // names/guilds resolved across ALL accounts, not just the active one
+  function anyName(id){ for(var i=0;i<accounts.length;i++){var u=accounts[i].users&&accounts[i].users[id]; if(u&&u.username)return u.username; var s=accounts[i].self; if(s&&s.id===id)return s.username;} return "user "+String(id).slice(0,6); }
+  function anyGuild(id){ for(var i=0;i<accounts.length;i++){var g=accounts[i].guilds&&accounts[i].guilds[id]; if(g&&g.name)return g.name;} return "server "+String(id).slice(0,6); }
+
+  function renderLookup(){
+    var box=$("#lookup-results");
+    var res=lookupAcross(accounts, lookupQuery);
+    if(!lookupQuery){ box.innerHTML='<div class="conn-empty">Type a username or user ID to see everything all your accounts have on them.</div>'; return; }
+    if(!res||!res.length){ box.innerHTML='<div class="conn-empty">Nothing found for "'+esc(lookupQuery)+'".</div>'; return; }
+    box.innerHTML=res.slice(0,12).map(function(r){
+      var rows=r.per.map(function(x){
+        var d=accounts[x.acct], f=x.fp;
+        var bits=[];
+        if(f.isSelf) bits.push('<b>this is that account</b>');
+        if(f.sessions) bits.push(f.sessions+' voice ('+fmtDur(f.voiceMs)+')');
+        if(f.messages) bits.push(f.messages+' messages');
+        if(f.online) bits.push(fmtDur(f.online)+' online');
+        if(f.companions) bits.push(f.companions+' call companions');
+        if(f.seenAsCompanion) bits.push('seen in a dossier');
+        var g=Object.keys(f.guilds).length; if(g) bits.push(g+' shared server'+(g===1?'':'s'));
+        return '<div class="lk-acct"><span class="lk-from">'+esc(acctName(d))+'</span><span class="lk-bits">'+(bits.join(' · ')||'present')+'</span></div>';
+      }).join("");
+      return '<div class="lk-card"><div class="lk-head">'+esc(r.name||("user "+r.id.slice(0,6)))
+        +' <span class="lk-id">'+esc(r.id)+'</span><span class="lk-badge">'+r.per.length+' account'+(r.per.length===1?'':'s')+'</span></div>'+rows+'</div>';
+    }).join("");
+  }
+
+  function trunc(s,n){ s=String(s); return s.length>n? s.slice(0,n-1)+"…": s; }
+
+  /* ---------- messages & presence (from Xicord Collector) ---------- */
+  function renderMessages(){
+    var M=cache.messages||{daily:{},byUser:{},byChannel:{}};
+    var P=cache.presence||[];
+    var msgTotal=Object.keys(M.byUser).reduce(function(a,k){return a+M.byUser[k];},0);
+    var hasData = msgTotal>0 || P.length>0;
+    var sec=$("#msg-section");
+    if(!hasData){ sec.classList.add("hidden"); return; }
+    sec.classList.remove("hidden");
+
+    /* messages over time (respects the range filter by day) */
+    var cut = range==="all"? 0 : Date.now()-parseInt(range,10)*86400000;
+    var mpts=Object.keys(M.daily).sort().map(function(k){var d=k.split("-");
+      return {t:new Date(+d[0],+d[1]-1,+d[2]).getTime(), v:M.daily[k]};})
+      .filter(function(p){return p.t>=cut;});
+    $("#msg-hint").textContent = M.since? ("since "+new Date(M.since).toLocaleDateString([], {month:"short",day:"numeric"})+" · "+msgTotal+" messages") : (msgTotal+" messages");
+    area($("#ch-msgtime"),mpts,{unit:"message"});
+
+    /* top people by messages */
+    var mp=Object.keys(M.byUser).map(function(k){return [k,M.byUser[k]];})
+      .sort(function(a,b){return b[1]-a[1];}).slice(0,10).map(function(e){
+        return {label:trunc(uname(e[0]),22),full:uname(e[0]),value:e[1],disp:String(e[1]),tip:e[1]+" messages"};});
+    barH($("#ch-msgpeople"),mp,{dim:true});
+
+    /* top channels by messages */
+    var mc=Object.keys(M.byChannel).map(function(k){return [k,M.byChannel[k]];})
+      .sort(function(a,b){return b[1]-a[1];}).slice(0,8).map(function(e){
+        return {label:trunc(cname(e[0]),26),full:cname(e[0]),value:e[1],disp:String(e[1]),tip:e[1]+" messages"};});
+    barH($("#ch-msgchannels"),mc,{dim:true});
+
+    /* online time per user */
+    var onlineMs={}; P.forEach(function(s){ onlineMs[s.userId]=(onlineMs[s.userId]||0)+Math.max(0,(s.end||s.start)-s.start); });
+    var ot=Object.keys(onlineMs).map(function(k){return [k,onlineMs[k]];})
+      .sort(function(a,b){return b[1]-a[1];}).slice(0,10).map(function(e){
+        return {label:trunc(uname(e[0]),22),full:uname(e[0]),value:e[1],disp:fmtDur(e[1]),tip:fmtDur(e[1])+" online"};});
+    barH($("#ch-online"),ot,{dim:true});
+  }
+
+  /* ---------- dossier ego-network ---------- */
+  function ago(ts){ if(!ts)return"—"; var s=Math.floor((Date.now()-ts)/1000);
+    if(s<3600)return Math.floor(s/60)+"m ago"; if(s<86400)return Math.floor(s/3600)+"h ago"; return Math.floor(s/86400)+"d ago"; }
+  function initial(name){ return String(name||"?").trim().charAt(0).toUpperCase()||"?"; }
+
+  // Cancels the simulation left running by a previous network() call. Without
+  // this, re-rendering (target change, resize, reload) would leave rAF loops
+  // animating detached SVG nodes forever.
+  var netStop=null;
+
+  function network(host, targetId, view){
+    if(netStop){ netStop(); netStop=null; }
+    var comps=Object.keys(view.companions).map(function(k){var c=view.companions[k];return {id:k,count:c.count,ms:c.ms,last:c.last};})
+      .sort(function(a,b){return b.count-a.count||b.ms-a.ms;}).slice(0,24);
+    if(!comps.length){ host.innerHTML='<div class="empty-note">No companions recorded for this person yet — the Dossier fills in as they hang out in public voice channels.</div>'; return; }
+    var W=widthOf(host), H=Math.max(320, Math.min(460, comps.length*16+240));
+    var cx=W/2, cy=H/2, R=Math.min(W,H)/2-56;
+    var maxCount=Math.max.apply(null,comps.map(function(c){return c.count;}))||1;
+    var s=svgRoot(host,W,H);
+    s.setAttribute("class","net");
+    s.setAttribute("role","application");
+    s.setAttribute("aria-label","Companion network for "+uname(targetId)+". Drag nodes to rearrange.");
+
+    /* ---- model: node 0 is the target, the rest orbit it ---- */
+    var nodes=[{id:targetId,r:22,x:cx,y:cy,vx:0,vy:0,center:true}];
+    comps.forEach(function(c,i){
+      var ang=-Math.PI/2+i/comps.length*2*Math.PI;
+      var strength=c.count/maxCount;
+      nodes.push({
+        id:c.id, c:c, i:i, r:7+9*Math.sqrt(strength),
+        // stronger bonds rest closer in, so the layout reads at a glance
+        rest:R*(0.55+0.45*(1-strength)),
+        x:cx+R*Math.cos(ang), y:cy+R*Math.sin(ang), vx:0, vy:0
+      });
+    });
+
+    /* ---- DOM built once; the loop only moves things ---- */
+    var bg=el("rect",{x:0,y:0,width:W,height:H,class:"net-bg"}); s.appendChild(bg);
+    var root=el("g",{}); s.appendChild(root);
+    var gEdges=el("g",{}); root.appendChild(gEdges);
+    var gNodes=el("g",{}); root.appendChild(gNodes);
+
+    nodes.forEach(function(n){
+      if(n.center) return;
+      n.edge=el("line",{stroke:"var(--data)","stroke-width":(1+4*(n.c.count/maxCount)).toFixed(2),"stroke-opacity":0.28,"stroke-linecap":"round"});
+      gEdges.appendChild(n.edge);
+    });
+
+    nodes.forEach(function(n){
+      var name=uname(n.id), g=el("g",{});
+      n.dot=el("circle",{r:n.r,fill:n.center?"var(--data)":"var(--data-2)",stroke:"var(--surface)","stroke-width":n.center?3:2});
+      g.appendChild(n.dot);
+      n.glyph=el("text",{"text-anchor":"middle","font-size":n.center?16:Math.min(12,n.r),"font-weight":n.center?800:700,fill:"#fff"});
+      n.glyph.textContent=initial(name); g.appendChild(n.glyph);
+      // labels: the target always, plus the strongest companions
+      if(n.center || n.i<8 || n.c.count>=maxCount*0.5){
+        n.label=el("text",{"text-anchor":"middle",class:"cat-label","font-size":n.center?12:11});
+        if(n.center) n.label.setAttribute("font-weight",700);
+        n.label.textContent=trunc(name,n.center?20:16); g.appendChild(n.label);
+      }
+      n.hit=el("circle",{r:Math.max(n.r,16),class:"net-node"});
+      n.hit.addEventListener("mousemove",function(ev){
+        if(drag) return;
+        showTip('<div class="tt">'+esc(name)+'</div><div class="tv">'
+          +(n.center?"target · "+comps.length+" companions":n.c.count+'× together · '+fmtDur(n.c.ms)+' · '+ago(n.c.last))+'</div>',ev.clientX,ev.clientY);
+      });
+      n.hit.addEventListener("mouseleave",hideTip);
+      n.hit.addEventListener("pointerdown",onNodeDown(n));
+      g.appendChild(n.hit);
+      gNodes.appendChild(g);
+      n.g=g;
+    });
+    // target drawn on top
+    gNodes.appendChild(nodes[0].g);
+
+    /* ---- physics ---- */
+    var alpha=1, raf=0, running=false, drag=null, pan={x:0,y:0}, panDrag=null;
+    var still=getComputedStyle(s).getPropertyValue("--net-still").trim()==="1";
+    // cursor field: the graph parts around the pointer as it moves, and nodes
+    // near it swell + brighten their edge
+    var ptr={x:0,y:0,on:false}, ptrMoved=false, FIELD=110, FIELD_F=0.35;
+    function fieldAt(n){
+      if(!ptr.on||still) return 0;
+      var d=Math.sqrt((n.x-ptr.x)*(n.x-ptr.x)+(n.y-ptr.y)*(n.y-ptr.y));
+      return d>=FIELD?0:1-d/FIELD;
+    }
+
+    function step(){
+      var i,j,a,b,dx,dy,d,ux,uy,f,c=nodes[0];
+      for(i=1;i<nodes.length;i++){                     // springs to the target
+        a=nodes[i]; dx=a.x-c.x; dy=a.y-c.y; d=Math.sqrt(dx*dx+dy*dy)||0.01;
+        ux=dx/d; uy=dy/d; f=(d-a.rest)*0.045*alpha;
+        if(!a.fixed){ a.vx-=ux*f; a.vy-=uy*f; }
+        if(!c.fixed){ c.vx+=ux*f*0.15; c.vy+=uy*f*0.15; }
+      }
+      for(i=0;i<nodes.length;i++){                     // repulsion + hard collision
+        for(j=i+1;j<nodes.length;j++){
+          a=nodes[i]; b=nodes[j];
+          dx=b.x-a.x; dy=b.y-a.y; d=Math.sqrt(dx*dx+dy*dy)||0.01;
+          ux=dx/d; uy=dy/d;
+          f=Math.min(2.2,1800/(d*d))*alpha;
+          if(!a.fixed){ a.vx-=ux*f; a.vy-=uy*f; }
+          if(!b.fixed){ b.vx+=ux*f; b.vy+=uy*f; }
+          var minD=a.r+b.r+6;
+          if(d<minD){ var push=(minD-d)*0.5;
+            if(!a.fixed){ a.x-=ux*push; a.y-=uy*push; }
+            if(!b.fixed){ b.x+=ux*push; b.y+=uy*push; }
+          }
+        }
+      }
+      if(!c.fixed){ c.vx+=(cx-c.x)*0.02*alpha; c.vy+=(cy-c.y)*0.02*alpha; }
+      if(ptr.on&&!still){                              // cursor pushes nodes aside
+        for(i=0;i<nodes.length;i++){
+          a=nodes[i]; if(a.fixed) continue;
+          var t=fieldAt(a); if(!t) continue;
+          dx=a.x-ptr.x; dy=a.y-ptr.y; d=Math.sqrt(dx*dx+dy*dy)||0.01;
+          // t*t keeps the very centre of the field from spiking, so the node
+          // settles a short way off instead of fleeing the pointer entirely
+          f=FIELD_F*t*t*alpha;
+          a.vx+=(dx/d)*f; a.vy+=(dy/d)*f;
+        }
+      }
+      var fastest=0;
+      for(i=0;i<nodes.length;i++){                     // integrate
+        a=nodes[i];
+        if(a.fixed){ a.vx=0; a.vy=0; continue; }
+        a.vx*=0.86; a.vy*=0.86; a.x+=a.vx; a.y+=a.vy;
+        var sp=Math.abs(a.vx)+Math.abs(a.vy);
+        if(sp>fastest) fastest=sp;
+      }
+      return fastest;
+    }
+
+    function draw(){
+      var c=nodes[0];
+      nodes.forEach(function(n){
+        var t=fieldAt(n);
+        if(n.edge){ n.edge.setAttribute("x1",c.x); n.edge.setAttribute("y1",c.y);
+                    n.edge.setAttribute("x2",n.x); n.edge.setAttribute("y2",n.y);
+                    n.edge.setAttribute("stroke-opacity",(0.28+0.55*t).toFixed(3)); }
+        if(t!==n.lastT){ n.lastT=t;
+          n.dot.setAttribute("r",(n.r*(1+0.3*t)).toFixed(2));
+          // grow the invisible hit target with the field, so a node nudged aside
+          // by the cursor stays hoverable/grabbable instead of dodging you
+          n.hit.setAttribute("r",(Math.max(n.r,16)*(1+0.9*t)).toFixed(2));
+        }
+        n.dot.setAttribute("cx",n.x); n.dot.setAttribute("cy",n.y);
+        n.glyph.setAttribute("x",n.x); n.glyph.setAttribute("y",n.y+(n.center?5:3.5));
+        n.hit.setAttribute("cx",n.x); n.hit.setAttribute("cy",n.y);
+        if(!n.label) return;
+        if(n.center){ n.label.setAttribute("x",n.x); n.label.setAttribute("y",n.y+n.r+16); return; }
+        var ang=Math.atan2(n.y-c.y,n.x-c.x), co=Math.cos(ang);
+        n.label.setAttribute("x",n.x+(n.r+10)*co);
+        n.label.setAttribute("y",n.y+(n.r+10)*Math.sin(ang)+3);
+        n.label.setAttribute("text-anchor",co>0.2?"start":co<-0.2?"end":"middle");
+      });
+    }
+
+    function frame(){
+      if(drag) alpha=Math.max(alpha,0.3);
+      // Energy is topped up only while the pointer is actually MOVING, so the
+      // graph parts as the cursor sweeps and relaxes when it stops — and the loop
+      // can go idle instead of spinning forever with the cursor parked on the card.
+      else if(ptrMoved&&ptr.on&&!still) alpha=Math.max(alpha,0.22);
+      var speed=step(); draw();
+      ptrMoved=false;
+      if(drag||speed>0.05||alpha>0.008){ alpha*=0.985; raf=requestAnimationFrame(frame); }
+      else running=false;
+    }
+    function reheat(a){ alpha=Math.max(alpha,a); if(!running){ running=true; raf=requestAnimationFrame(frame); } }
+
+    /* ---- interaction ---- */
+    // Client px -> viewBox units. `.card svg` is width:100%/height:auto, so the
+    // viewBox scale is uniform and one factor is enough.
+    function raw(ev){ var b=s.getBoundingClientRect(), k=W/(b.width||W);
+      return {x:(ev.clientX-b.left)*k, y:(ev.clientY-b.top)*k}; }
+    function local(ev){ var p=raw(ev); return {x:p.x-pan.x, y:p.y-pan.y}; }
+
+    function onNodeDown(n){ return function(ev){
+      ev.preventDefault(); ev.stopPropagation();
+      hideTip();
+      drag={n:n}; n.fixed=true;
+      s.classList.add("dragging");
+      try{ s.setPointerCapture(ev.pointerId); }catch(e){}
+      reheat(0.9);
+    };}
+
+    bg.addEventListener("pointerdown",function(ev){
+      ev.preventDefault();
+      var p=raw(ev);
+      panDrag={sx:p.x,sy:p.y,ox:pan.x,oy:pan.y};
+      s.classList.add("dragging");
+      try{ s.setPointerCapture(ev.pointerId); }catch(e){}
+    });
+
+    s.addEventListener("pointermove",function(ev){
+      var p=local(ev);
+      if(p.x!==ptr.x||p.y!==ptr.y) ptrMoved=true;
+      ptr.x=p.x; ptr.y=p.y; ptr.on=true;
+      if(drag){ drag.n.x=p.x; drag.n.y=p.y; drag.n.vx=0; drag.n.vy=0; reheat(0.5); }
+      else if(panDrag){ var q=raw(ev);
+        pan.x=panDrag.ox+(q.x-panDrag.sx); pan.y=panDrag.oy+(q.y-panDrag.sy);
+        root.setAttribute("transform","translate("+pan.x+","+pan.y+")"); }
+      else if(!still) reheat(0.22);
+    });
+    s.addEventListener("pointerenter",function(){ ptr.on=true; });
+    // ignore the leave that fires mid-drag while the pointer is captured
+    s.addEventListener("pointerleave",function(){ if(drag||panDrag) return; ptr.on=false; if(!still) reheat(0.4); });
+
+    function release(ev){
+      if(drag){ drag.n.fixed=false; drag=null; reheat(0.45); }
+      panDrag=null; s.classList.remove("dragging");
+      // touch has no hover, and pointerleave won't fire — drop the field
+      if(ev&&ev.pointerType==="touch"){ ptr.on=false; reheat(0.4); }
+      try{ s.releasePointerCapture(ev.pointerId); }catch(e){}
+    }
+    s.addEventListener("pointerup",release);
+    s.addEventListener("pointercancel",release);
+
+    // double-click empty space: recentre the view and shake the layout loose
+    bg.addEventListener("dblclick",function(){
+      pan.x=0; pan.y=0; root.setAttribute("transform","translate(0,0)");
+      nodes.forEach(function(n,i){ if(!i) return;
+        var ang=-Math.PI/2+n.i/comps.length*2*Math.PI;
+        n.x=cx+R*Math.cos(ang); n.y=cy+R*Math.sin(ang); n.vx=0; n.vy=0; });
+      nodes[0].x=cx; nodes[0].y=cy; reheat(1);
+    });
+
+    netStop=function(){ cancelAnimationFrame(raf); running=false; drag=null; panDrag=null; };
+    draw();
+    if(still){ alpha=0; for(var k=0;k<220;k++){ alpha=1-k/220; step(); } alpha=0; draw(); }
+    else reheat(1);
+  }
+
+  /* ---------- full dossier: everyone at once ---------- */
+  // Mirrors the plugin's buildFullGraph. Each pair is counted once (both people may
+  // hold a record of the same call), node size comes from total shared calls, and the
+  // drawn edges are thinned to each person's strongest few — in a group where everyone
+  // knows everyone the edge count grows with the SQUARE of the group size, which is a
+  // solid block of colour rather than a readable web.
+  var FULL_LINKS_PER_NODE=6;
+  function fullGraphData(D, limit){
+    var pairW={}, pairMs={}, strength={}, msTotal={};
+    var self=(cache&&cache.self&&cache.self.id)||null;
+    Object.keys(D||{}).forEach(function(id){
+      if(id===self) return;                 // you are in every call you join
+      var comps=(D[id]&&D[id].companions)||{};
+      Object.keys(comps).forEach(function(c){
+        if(c===id||c===self) return;
+        var n=(comps[c]&&comps[c].count)||0; if(!n) return;
+        var key=id<c?id+"|"+c:c+"|"+id;
+        pairW[key]=Math.max(pairW[key]||0,n);
+        pairMs[key]=Math.max(pairMs[key]||0,(comps[c]&&comps[c].ms)||0);
+        strength[id]=(strength[id]||0)+n; strength[c]=(strength[c]||0)+n;
+      });
+    });
+    Object.keys(pairMs).forEach(function(k){
+      var p=k.split("|");
+      msTotal[p[0]]=(msTotal[p[0]]||0)+pairMs[k];
+      msTotal[p[1]]=(msTotal[p[1]]||0)+pairMs[k];
+    });
+    var ids=Object.keys(strength).sort(function(a,b){return strength[b]-strength[a];}).slice(0,limit);
+    var idx={}; ids.forEach(function(id,i){idx[id]=i;});
+    var all=[];
+    Object.keys(pairW).forEach(function(k){
+      var p=k.split("|"), a=idx[p[0]], b=idx[p[1]];
+      if(a===undefined||b===undefined) return;
+      all.push({a:a,b:b,w:pairW[k]});
+    });
+    // keep the union of each node's strongest few edges: a star survives intact,
+    // because each spoke's only link is its own top one. Thin the per-node budget on
+    // big graphs so the browser isn't redrawing tens of thousands of SVG lines a frame.
+    var perNode=ids.length>1500?3:ids.length>700?4:FULL_LINKS_PER_NODE;
+    var byNode={};
+    all.forEach(function(l,i){ (byNode[l.a]=byNode[l.a]||[]).push(i); (byNode[l.b]=byNode[l.b]||[]).push(i); });
+    var keep={};
+    Object.keys(byNode).forEach(function(n){
+      byNode[n].sort(function(x,y){return all[y].w-all[x].w;});
+      byNode[n].slice(0,perNode).forEach(function(i){keep[i]=1;});
+    });
+    var links=Object.keys(keep).map(Number).sort(function(a,b){return a-b;}).map(function(i){return all[i];});
+    return {ids:ids,links:links,strength:strength,msTotal:msTotal,total:Object.keys(strength).length};
+  }
+
+  var fullStop=null;
+  function fullNetwork(host, data){
+    if(fullStop){ fullStop(); fullStop=null; }
+    var ids=data.ids, links=data.links;
+    if(!ids.length){ host.innerHTML='<div class="empty-note">No recorded calls yet.</div>'; return; }
+    var W=widthOf(host), H=Math.max(360, host.clientHeight||520);
+    var cx=W/2, cy=H/2, n=ids.length;
+    var s=svgRoot(host,W,H);
+    s.setAttribute("class","net");
+    s.setAttribute("role","application");
+    s.setAttribute("aria-label","Everyone in the dossier, "+n+" people. Drag to rearrange, scroll to zoom.");
+
+    var maxS=1, maxW=1;
+    ids.forEach(function(id){ maxS=Math.max(maxS,data.strength[id]||0); });
+    links.forEach(function(l){ maxW=Math.max(maxW,l.w); });   // reduce, never spread: this can be thousands
+    var scale=Math.max(0.4,Math.min(1,8/Math.sqrt(n)));
+    var base=Math.max(26,Math.min(Math.min(W,H)/2-30, Math.sqrt(W*H/n)*0.6));
+    var cut2=Math.pow(base*2.6,2), gridCell=base*2.6, centrePull=0.006*Math.max(1,Math.sqrt(n)/8);
+    var GOLDEN=Math.PI*(3-Math.sqrt(5)), rx=W*0.46, ry=H*0.46, last=Math.max(1,n-1);
+
+    var bg=el("rect",{x:0,y:0,width:W,height:H,class:"net-bg"}); s.appendChild(bg);
+    var root=el("g",{}); s.appendChild(root);
+    var gEdges=el("g",{}); root.appendChild(gEdges);
+    var gNodes=el("g",{}); root.appendChild(gNodes);
+
+    // phyllotaxis seeding: one ring would open a big graph as a solid pile
+    var nodes=ids.map(function(id,i){
+      var t=Math.sqrt(i/last), ang=i*GOLDEN;
+      var hash=function(k){return ((Math.sin(k*12.9898)*43758.5453)%1+1)%1-0.5;};
+      var jit=Math.min(rx,ry)/Math.sqrt(last)*0.7;
+      var sN=(data.strength[id]||0)/maxS;
+      return {id:id,i:i,r:(6+11*Math.sqrt(sN))*scale,
+        x:cx+rx*t*Math.cos(ang)+hash(i)*jit, y:cy+ry*t*Math.sin(ang)+hash(i+991)*jit,
+        vx:0,vy:0,fixed:false};
+    });
+    var bonds=links.map(function(l){
+      var e=el("line",{stroke:"var(--data)","stroke-width":(0.8+3*(l.w/maxW)).toFixed(2),
+        "stroke-opacity":0.22,"stroke-linecap":"round"});
+      gEdges.appendChild(e);
+      return {a:nodes[l.a],b:nodes[l.b],el:e,rest:base*(0.55+0.45*(1-l.w/maxW))};
+    }).filter(function(b){return b.a&&b.b;});
+
+    var drag=null, panDrag=null, z=1, pan={x:0,y:0};
+    function applyView(){ root.setAttribute("transform","translate("+pan.x+","+pan.y+") scale("+z+")"); }
+    nodes.forEach(function(nd){
+      var name=uname(nd.id), g=el("g",{});
+      nd.dot=el("circle",{r:nd.r,fill:"var(--data-2)",stroke:"var(--surface)","stroke-width":1.5});
+      g.appendChild(nd.dot);
+      nd.hit=el("circle",{r:Math.max(nd.r,9),class:"net-node"});
+      nd.hit.addEventListener("mousemove",function(ev){
+        if(drag) return;
+        showTip('<div class="tt">'+esc(name)+'</div><div class="tv">'
+          +(data.strength[nd.id]||0)+' shared calls · '+fmtDur(data.msTotal[nd.id]||0)+'</div>',ev.clientX,ev.clientY);
+      });
+      nd.hit.addEventListener("mouseleave",hideTip);
+      nd.hit.addEventListener("pointerdown",function(ev){
+        ev.preventDefault(); ev.stopPropagation();
+        drag={n:nd}; nd.fixed=true; s.classList.add("dragging");
+        try{s.setPointerCapture(ev.pointerId);}catch(e){}
+        reheat(0.9);
+      });
+      g.appendChild(nd.hit);
+      gNodes.appendChild(g); nd.g=g;
+    });
+
+    var alpha=1, raf=0, running=false;
+    var MAX_STEP=40;
+    function step(){
+      var i,j,a,b,dx,dy,d,ux,uy,f;
+      for(i=0;i<bonds.length;i++){ var bo=bonds[i]; a=bo.a; b=bo.b;
+        dx=a.x-b.x; dy=a.y-b.y; d=Math.hypot(dx,dy)||0.01; ux=dx/d; uy=dy/d;
+        f=(d-bo.rest)*0.045*alpha;
+        if(!a.fixed){a.vx-=ux*f;a.vy-=uy*f;} if(!b.fixed){b.vx+=ux*f;b.vy+=uy*f;}
+      }
+      // Spatial-grid repulsion. Repulsion and collision only reach `gridCell` (the
+      // cutoff), so binning nodes into cells of that size and testing each node against
+      // only its own + 8 neighbouring cells finds every in-range pair exactly once
+      // (the j<=i guard) while skipping the millions of far-apart pairs the old
+      // all-pairs sweep walked every frame — the fix that stops thousands of people
+      // from freezing the tab.
+      var grid={};
+      for(i=0;i<nodes.length;i++){ a=nodes[i];
+        var gk=Math.floor(a.x/gridCell)+","+Math.floor(a.y/gridCell);
+        (grid[gk]||(grid[gk]=[])).push(i); }
+      for(i=0;i<nodes.length;i++){ a=nodes[i];
+        var cxk=Math.floor(a.x/gridCell), cyk=Math.floor(a.y/gridCell);
+        for(var ox=-1;ox<=1;ox++) for(var oy=-1;oy<=1;oy++){
+          var bucket=grid[(cxk+ox)+","+(cyk+oy)]; if(!bucket) continue;
+          for(var bi=0;bi<bucket.length;bi++){ j=bucket[bi]; if(j<=i) continue;
+            b=nodes[j]; dx=b.x-a.x; dy=b.y-a.y;
+            var dd=dx*dx+dy*dy; if(dd>cut2) continue;
+            d=Math.sqrt(dd)||0.01; ux=dx/d; uy=dy/d;
+            f=Math.min(2.2,1800/(d*d))*alpha;
+            if(!a.fixed){a.vx-=ux*f;a.vy-=uy*f;} if(!b.fixed){b.vx+=ux*f;b.vy+=uy*f;}
+            var minD=a.r+b.r+8;
+            if(d<minD){ var push=(minD-d)*0.5;
+              if(!a.fixed){a.x-=ux*push;a.y-=uy*push;} if(!b.fixed){b.x+=ux*push;b.y+=uy*push;} }
+          }
+        }
+      }
+      var fastest=0;
+      for(i=0;i<nodes.length;i++){ a=nodes[i];
+        if(a.fixed){a.vx=0;a.vy=0;continue;}
+        a.vx+=(cx-a.x)*centrePull*alpha; a.vy+=(cy-a.y)*centrePull*alpha;
+        a.vx*=0.86; a.vy*=0.86;
+        // a heavily-connected person sums that many springs per frame; without a cap
+        // the layout can run away to coordinates in the billions
+        var sp2=a.vx*a.vx+a.vy*a.vy;
+        if(sp2>MAX_STEP*MAX_STEP){ var k=MAX_STEP/Math.sqrt(sp2); a.vx*=k; a.vy*=k; }
+        a.x+=a.vx; a.y+=a.vy;
+        var sp=Math.abs(a.vx)+Math.abs(a.vy); if(sp>fastest) fastest=sp;
+      }
+      return fastest;
+    }
+    function draw(){
+      for(var i=0;i<bonds.length;i++){ var bo=bonds[i];
+        bo.el.setAttribute("x1",bo.a.x); bo.el.setAttribute("y1",bo.a.y);
+        bo.el.setAttribute("x2",bo.b.x); bo.el.setAttribute("y2",bo.b.y);
+      }
+      for(i=0;i<nodes.length;i++){ var nd=nodes[i];
+        nd.dot.setAttribute("cx",nd.x); nd.dot.setAttribute("cy",nd.y);
+        nd.hit.setAttribute("cx",nd.x); nd.hit.setAttribute("cy",nd.y);
+      }
+    }
+    function frame(){ var sp=step(); draw();
+      if(drag||sp>0.05||alpha>0.008){ alpha*=0.985; raf=requestAnimationFrame(frame); } else running=false; }
+    function reheat(a){ alpha=Math.max(alpha,a); if(!running){running=true; raf=requestAnimationFrame(frame);} }
+
+    function raw(ev){ var b=s.getBoundingClientRect(), k=W/(b.width||W);
+      return {x:(ev.clientX-b.left)*k,y:(ev.clientY-b.top)*k}; }
+    function local(ev){ var p=raw(ev); return {x:(p.x-pan.x)/z,y:(p.y-pan.y)/z}; }
+    bg.addEventListener("pointerdown",function(ev){
+      ev.preventDefault(); var p=raw(ev);
+      panDrag={sx:p.x,sy:p.y,ox:pan.x,oy:pan.y}; s.classList.add("dragging");
+      try{s.setPointerCapture(ev.pointerId);}catch(e){}
+    });
+    s.addEventListener("pointermove",function(ev){
+      if(drag){ var p=local(ev); drag.n.x=p.x; drag.n.y=p.y; drag.n.vx=0; drag.n.vy=0; reheat(0.5); }
+      else if(panDrag){ var q=raw(ev); pan.x=panDrag.ox+(q.x-panDrag.sx); pan.y=panDrag.oy+(q.y-panDrag.sy); applyView(); }
+    });
+    function endDrag(){ if(drag){drag.n.fixed=false; drag=null; reheat(0.45);} panDrag=null; s.classList.remove("dragging"); }
+    s.addEventListener("pointerup",endDrag);
+    s.addEventListener("pointercancel",endDrag);
+    s.addEventListener("wheel",function(ev){
+      ev.preventDefault();
+      var p=raw(ev), nz=Math.max(0.2,Math.min(5,z*(ev.deltaY<0?1.12:1/1.12)));
+      if(nz===z) return;
+      var gx=(p.x-pan.x)/z, gy=(p.y-pan.y)/z;
+      z=nz; pan.x=p.x-gx*z; pan.y=p.y-gy*z; applyView();
+    },{passive:false});
+    bg.addEventListener("dblclick",function(){ pan.x=0; pan.y=0; z=1; applyView(); reheat(1); });
+
+    // A few collision-only passes so the first painted frame is already untangled.
+    // Grid-binned like the live step: the old all-pairs version ran tens of millions of
+    // checks synchronously here and froze the tab for seconds before anything drew.
+    var warmPasses=nodes.length>1200?3:10;
+    for(var w=0;w<warmPasses;w++){
+      var wgrid={};
+      for(var wi=0;wi<nodes.length;wi++){ var WN=nodes[wi];
+        var wk=Math.floor(WN.x/gridCell)+","+Math.floor(WN.y/gridCell);
+        (wgrid[wk]||(wgrid[wk]=[])).push(wi); }
+      for(var i2=0;i2<nodes.length;i2++){ var A=nodes[i2];
+        var acx=Math.floor(A.x/gridCell), acy=Math.floor(A.y/gridCell);
+        for(var wox=-1;wox<=1;wox++) for(var woy=-1;woy<=1;woy++){
+          var wb=wgrid[(acx+wox)+","+(acy+woy)]; if(!wb) continue;
+          for(var wbi=0;wbi<wb.length;wbi++){ var j2=wb[wbi]; if(j2<=i2) continue;
+            var B=nodes[j2],dx2=B.x-A.x,dy2=B.y-A.y,d2=Math.hypot(dx2,dy2)||0.01,m=A.r+B.r+8;
+            if(d2<m){ var u=(m-d2)*0.5; A.x-=dx2/d2*u; A.y-=dy2/d2*u; B.x+=dx2/d2*u; B.y+=dy2/d2*u; }
+          }
+        }
+      }
+    }
+    fullStop=function(){ cancelAnimationFrame(raf); running=false; drag=null; panDrag=null; };
+    applyView(); draw(); reheat(1);
+  }
+
+  function openFullDossier(){
+    if(!cache) return;
+    var ov=$("#full-overlay");
+    ov.classList.remove("hidden");
+    document.body.style.overflow="hidden";
+    renderFullDossier();
+  }
+  function closeFullDossier(){
+    if(fullStop){ fullStop(); fullStop=null; }
+    $("#full-overlay").classList.add("hidden");
+    document.body.style.overflow="";
+    if(location.hash==="#full"){
+      history.replaceState(null,"",location.pathname+location.search);
+    }
+  }
+  function renderFullDossier(){
+    if(!cache) return;
+    var lim=Math.max(10,Math.min(4000,parseInt($("#full-limit").value,10)||300));
+    var data=fullGraphData(cache.dossiers||{},lim);
+    $("#full-meta").textContent=data.ids.length+" of "+data.total+" people · "+data.links.length
+      +" strongest connections · scroll to zoom, drag a node, drag the background to pan, double-click to reset";
+    fullNetwork($("#full-plot"),data);
+  }
+
+  function renderDossier(){
+    var D=cache.dossiers||{};
+    var ids=Object.keys(D).filter(function(id){return D[id]&&D[id].companions&&Object.keys(D[id].companions).length;});
+    var sec=$("#dossier-section");
+    if(!ids.length){ if(netStop){ netStop(); netStop=null; } sec.classList.add("hidden"); return; }
+    sec.classList.remove("hidden");
+    ids.sort(function(a,b){return Object.keys(D[b].companions).length-Object.keys(D[a].companions).length;});
+    if(!dossierTarget || ids.indexOf(dossierTarget)<0) dossierTarget=ids[0];
+    var sel=$("#dossier-select");
+    sel.innerHTML=ids.map(function(id){return '<option value="'+esc(id)+'"'+(id===dossierTarget?' selected':'')+'>'+esc(uname(id))+'</option>';}).join("");
+    var view=D[dossierTarget];
+    var nComp=Object.keys(view.companions).length;
+    var nGuild=Object.keys(view.guilds||{}).length;
+    $("#dossier-meta").textContent=nComp+" companion"+(nComp===1?"":"s")+" across "+nGuild+" server"+(nGuild===1?"":"s")
+      +" · the graph reacts as you move the cursor · drag a node to rearrange, drag the background to pan, double-click to reset";
+    network($("#ch-dossier"),dossierTarget,view);
+
+    /* games this person has been seen playing (via presence) */
+    var G=view.games||{};
+    var gk=Object.keys(G).sort(function(a,b){return (G[b].ms||0)-(G[a].ms||0);}).slice(0,10);
+    var gh=$("#dossier-games");
+    if(gk.length){
+      gh.innerHTML='<p class="hint" style="margin-top:14px;margin-bottom:2px">Games played — observed play time via presence</p><div id="dossier-games-chart"></div>';
+      var rows=gk.map(function(n){var r=G[n]||{};return {label:trunc(n,26),full:n,value:r.ms||0,disp:fmtDur(r.ms||0),
+        tip:fmtDur(r.ms||0)+" · "+(r.sessions||0)+" session"+((r.sessions||0)===1?"":"s")+" · last "+ago(r.last)};});
+      barH($("#dossier-games-chart"),rows,{dim:true});
+    } else { gh.innerHTML=""; }
+  }
+
+  /* ---------- table ---------- */
+  function renderTable(S){
+    var rows=S.map(function(s){ return {
+      user:uname(s.userId), uid:s.userId, channel:cname(s.channelId),
+      join:s.join, dur:Math.max(0,(s.leave||s.join)-s.join) }; });
+    var q=tableQuery.toLowerCase();
+    if(q) rows=rows.filter(function(r){return r.user.toLowerCase().indexOf(q)>=0||r.channel.toLowerCase().indexOf(q)>=0;});
+    var k=tableSort.k, dir=tableSort.dir;
+    rows.sort(function(a,b){ var av=a[k],bv=b[k];
+      if(typeof av==="string"){av=av.toLowerCase();bv=bv.toLowerCase();}
+      return av<bv?-1*dir:av>bv?1*dir:0; });
+    var total=rows.length, shown=rows.slice(0,200);
+    $("#tbl-count").textContent=total+" session"+(total===1?"":"s");
+    $("#tbody").innerHTML=shown.map(function(r){
+      var av=uavatar(r.uid);
+      return '<tr><td><div class="who">'+(av?'<img src="'+esc(av)+'" alt="" loading="lazy">':'<img alt="">')
+        +'<span>'+esc(r.user)+'</span></div></td><td>'+esc(r.channel)+'</td>'
+        +'<td class="num">'+esc(fmtDate(r.join))+'</td><td class="num">'+esc(fmtDur(r.dur))+'</td></tr>';
+    }).join("");
+    $("#tbl-more").textContent= total>200 ? ("Showing first 200 of "+total+" — narrow with search.") : "";
+  }
+  Array.prototype.forEach.call(document.querySelectorAll("#tbl th"),function(th){
+    th.addEventListener("click",function(){
+      var k=th.getAttribute("data-k");
+      if(tableSort.k===k) tableSort.dir*=-1; else {tableSort.k=k;tableSort.dir=(k==="user"||k==="channel")?1:-1;}
+      if(cache) renderTable(filteredSessions());
+    });
+  });
+  $("#search").addEventListener("input",function(e){ tableQuery=e.target.value; if(cache) renderTable(filteredSessions()); });
+  $("#dossier-select").addEventListener("change",function(e){ dossierTarget=e.target.value; if(cache) renderDossier(); });
+  $("#fullDossierBtn").addEventListener("click",openFullDossier);
+  $("#full-close").addEventListener("click",closeFullDossier);
+  $("#full-limit").addEventListener("change",function(){ if(!$("#full-overlay").classList.contains("hidden")) renderFullDossier(); });
+  document.addEventListener("keydown",function(e){
+    if(e.key==="Escape" && !$("#full-overlay").classList.contains("hidden")) closeFullDossier();
+  });
+  // the graph is sized to the viewport, so a resize has to rebuild it
+  var fullResize=null;
+  window.addEventListener("resize",function(){
+    if($("#full-overlay").classList.contains("hidden")) return;
+    clearTimeout(fullResize); fullResize=setTimeout(renderFullDossier,200);
+  });
+
+  /* ---------- range ---------- */
+  Array.prototype.forEach.call(document.querySelectorAll("#range button"),function(b){
+    b.addEventListener("click",function(){
+      range=b.getAttribute("data-r");
+      Array.prototype.forEach.call(document.querySelectorAll("#range button"),function(x){x.setAttribute("aria-pressed", x===b?"true":"false");});
+      if(cache) render();
+    });
+  });
+
+  /* ---------- resize ---------- */
+  var rt; addEventListener("resize",function(){ if(!cache)return; clearTimeout(rt); rt=setTimeout(render,150); });
+
+  /* ---------- auto-load when served by start.bat (localhost) ---------- */
+  var polling=false;
+  function applyLive(d){ var sl=$("#subline"); if(sl) sl.textContent=(d.self?("Live · "+d.self.username):"Live")+" · auto-refreshing from Discord"; }
+  function grab(cb){ fetch("/data",{cache:"no-store"}).then(function(r){return r.ok?r.text():Promise.reject();})
+    .then(function(txt){ var d; try{d=JSON.parse(txt);}catch(e){return;} if(d&&d.xicordCache&&!d.empty){ ingest(txt); applyLive(d); cb&&cb(); } }).catch(function(){}); }
+  function autoLoad(){ grab(function(){ if(!polling){ polling=true; setInterval(function(){ grab(); },30000); } }); }
+  autoLoad();
+})();
+</script>
+
+</body>
+</html>
