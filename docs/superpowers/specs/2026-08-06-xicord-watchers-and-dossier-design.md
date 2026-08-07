@@ -45,6 +45,37 @@ shares **public-server** voice channels with — never DMs or group calls.
   (USER_UPDATE `global_name`, GUILD_MEMBER_* `guild_id`), plus Game Watch seed
   gating and emoji-status handling.
 
+## Dossier: propagation (2026-08-06)
+The Dossier no longer tracks only the Target trait. It walks **outward through the
+recorded call graph** — targets, then everyone they called with, then everyone
+*those* people called with — with no depth limit, stopping at a cap.
+
+- `propagate` toggle (default on) and a `maxTracked` slider (default 150).
+- Breadth-first, so nearer hops always win a contested cap slot; within a hop the
+  strongest call-links win. Real targets are never dropped.
+- **Dossier-only**: nobody reached by propagation is added to the Target trait, so
+  no watcher toasts for them and Xicord Mutuals never scans them.
+- Because depth is unbounded, stored profiles are capped (`MAX_PROFILES = 600`,
+  least-recently-updated pruned first, never a target) — otherwise `settings.json`
+  would grow forever, and it is written synchronously to disk.
+- The modal's picker lists propagated people alongside targets, marked `↳`.
+
+## Dossier: the in-Discord graph is live (2026-08-06)
+`NetworkGraph` was a static ring. It is now a force layout: drag a node and the
+rest respond through springs + repulsion, drag the background to pan,
+double-click to reset, and the graph parts around the cursor as it moves (nodes
+swell, edges brighten).
+
+- Positions are deliberately **not** in the JSX. React renders the structure once
+  and a `requestAnimationFrame` loop writes `cx`/`cy` straight to the DOM, so a
+  parent re-render can't stomp the live layout and 20 nodes never re-render at
+  60fps. The effect is keyed on the cast (target + companion ids), not on
+  `viewProfile`'s output, which is a fresh object every render.
+- A node's invisible hit target grows with the cursor field, so a node nudged
+  aside stays grabbable rather than dodging the pointer.
+- Click still opens a profile, but only when the pointer moved < 4px — otherwise
+  every drag would open someone's profile on release.
+
 ## Known limits
 - Watchers only fire for what Discord tells your client (shared servers, visible
   channels, cached presence).
