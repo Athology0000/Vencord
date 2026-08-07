@@ -270,11 +270,12 @@ const fullNetSrc = extract("fullNetwork");
 const fullApi = new Function(
     "cache", "el", "svgRoot", "widthOf", "uname", "esc", "fmtDur", "showTip", "hideTip",
     "requestAnimationFrame", "cancelAnimationFrame",
-    `var fullStop=null; var fullIsolate=null; var FULL_LINKS_PER_NODE=6;
+    `var fullStop=null; var fullIsolate=null; var fullHighlight=null; var FULL_LINKS_PER_NODE=6;
      function groupColor(r){return "#888";}
      ${fullSrc}; ${fullNetSrc};
      return {fullGraphData:fullGraphData, fullNetwork:fullNetwork,
-       getStop:function(){return fullStop;}, getIsolate:function(){return fullIsolate;}};`
+       getStop:function(){return fullStop;}, getIsolate:function(){return fullIsolate;},
+       getHighlight:function(){return fullHighlight;}};`
 )(cache, el, svgRoot, widthOf, uname, esc, fmtDur, showTip, hideTip, requestAnimationFrame, cancelAnimationFrame);
 
 // a sparse "everyone" dataset: each person linked to a handful of others
@@ -379,6 +380,45 @@ iso(null);
 ok("clearing isolation restores every node to full opacity", ids8.every((_, i) => gOpacity(i) === "1"));
 ok("clearing isolation restores clickability", ids8.every((_, i) => gEvents(i) === "auto"));
 const isoStop = fullApi.getIsolate() && fullApi.getStop(); if (isoStop) isoStop();
+
+console.log("\n-- searching people highlights matches, dims the rest --");
+const shHost = new FakeEl("div");
+fullApi.fullNetwork(shHost, { ids: ids8, links: links8, strength: strength8, msTotal: msTotal8 }, gr8);
+const hl = fullApi.getHighlight();
+ok("fullNetwork exposes a highlight hook", typeof hl === "function");
+const shSvg = shHost.children[0];
+const shHits = shSvg.all(e => e.classList.contains("net-node")); // ids order
+// uname in the harness is id => "user_" + id, so "user_a" matches only A
+const dotOf = i => shHits[i].parent.children.find(c => c.tag === "circle" && !c.classList.contains("net-node"));
+const opOf = i => +shHits[i].parent.getAttribute("opacity");
+
+const found = hl("user_a");
+ok("reports the match count", found === 1, `got ${found}`);
+ok("the matched person stays fully opaque", opOf(0) === 1, `A op ${opOf(0)}`);
+ok("the match gets a highlight ring", dotOf(0).getAttribute("stroke-width") === "3");
+ok("everyone else is dimmed", ids8.slice(1).every((_, k) => opOf(k + 1) === 0.14), ids8.map((_, i) => opOf(i)).join(","));
+ok("dimmed people keep their normal ring", dotOf(1).getAttribute("stroke-width") === "1.5");
+
+const many = hl("user_");   // matches everyone
+ok("a broad query matches everybody", many === 8, `got ${many}`);
+ok("all matches are opaque", ids8.every((_, i) => opOf(i) === 1));
+
+ok("no matches -> zero found", hl("zzzznope") === 0);
+ok("a no-match query dims everyone", ids8.every((_, i) => opOf(i) === 0.14));
+
+const cleared = hl("");
+ok("clearing the search restores full opacity", ids8.every((_, i) => opOf(i) === 1));
+ok("clearing removes highlight rings", dotOf(0).getAttribute("stroke-width") === "1.5");
+ok("empty query reports 0", cleared === 0);
+
+console.log("\n-- search composes with group isolation --");
+fullApi.getIsolate()(0);            // isolate group 0
+hl("user_");                        // then match everyone
+const inG0b = ids8.map((_, i) => gr8.idGroup[ids8[i]] === 0);
+ok("isolation still hides non-group members even when they match the search",
+    ids8.every((_, i) => inG0b[i] ? opOf(i) === 1 : opOf(i) === 0.08),
+    ids8.map((_, i) => opOf(i)).join(","));
+const shStop = fullApi.getStop(); if (shStop) shStop();
 
 console.log(`\n${pass} passed, ${fail} failed\n`);
 process.exit(fail ? 1 : 0);

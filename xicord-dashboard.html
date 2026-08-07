@@ -308,6 +308,9 @@
           <input class="search" id="full-limit" type="number" min="10" max="4000" step="10"
                  style="width:88px;margin-left:6px" value="300">
         </label>
+        <input class="search" id="full-search" type="search" placeholder="Find people…"
+               style="width:170px" autocomplete="off">
+        <span class="hint" id="full-search-meta" style="margin:0"></span>
         <span class="hint" id="full-meta" style="margin:0"></span>
         <button class="btn" id="full-groups-toggle" title="Show / hide detected friend groups">Groups</button>
         <button class="btn" id="full-close" style="margin-left:auto">Close (Esc)</button>
@@ -1201,10 +1204,10 @@
     return {ids:ids,links:links,strength:strength,msTotal:msTotal,total:Object.keys(strength).length};
   }
 
-  var fullStop=null, fullIsolate=null;
+  var fullStop=null, fullIsolate=null, fullHighlight=null;
   function fullNetwork(host, data, groups){
     if(fullStop){ fullStop(); fullStop=null; }
-    fullIsolate=null;
+    fullIsolate=null; fullHighlight=null;
     var idGroup=(groups&&groups.idGroup)||{};
     var ids=data.ids, links=data.links;
     if(!ids.length){ host.innerHTML='<div class="empty-note">No recorded calls yet.</div>'; return; }
@@ -1358,23 +1361,34 @@
     },{passive:false});
     bg.addEventListener("dblclick",function(){ applyIsolation(null); pan.x=0; pan.y=0; z=1; applyView(); reheat(1); });
 
-    // Isolate one detected group: keep its members bright and interactive, fade everyone
-    // else right down (and make them unclickable so you can't grab a ghost), then frame
-    // the group. Passing null restores the full graph. Opacity lives on the node <g> and
-    // the edge stroke, neither of which draw() touches, so it survives the physics loop.
-    var isolated=null;
-    function applyIsolation(rank){
-      isolated=rank;
+    // One filter pass drives both group-isolation and people-search, so they compose:
+    // isolation sets who is *shown* (others fade to 8% and go unclickable); an active
+    // search dims the shown-but-unmatched to 14% and rings the matches. Opacity/stroke
+    // live on the node <g> and edge stroke, neither of which draw() touches, so the
+    // effect survives the running physics loop.
+    var isolated=null, query="";
+    function refreshFilter(){
       nodes.forEach(function(nd){
-        var on = rank==null || idGroup[nd.id]===rank;
-        nd.g.setAttribute("opacity", on?1:0.08);
-        nd.hit.setAttribute("pointer-events", on?"auto":"none");
+        var shown = isolated==null || idGroup[nd.id]===isolated;
+        var match = query==="" || uname(nd.id).toLowerCase().indexOf(query)>=0;
+        nd.op = !shown ? 0.08 : (query!=="" && !match ? 0.14 : 1);
+        nd.g.setAttribute("opacity", nd.op);
+        nd.hit.setAttribute("pointer-events", nd.op>=1?"auto":"none");
+        var hot = shown && query!=="" && match;
+        nd.dot.setAttribute("stroke", hot?"var(--data)":"var(--surface)");
+        nd.dot.setAttribute("stroke-width", hot?3:1.5);
       });
       bonds.forEach(function(bo){
-        var on = rank==null || (idGroup[bo.a.id]===rank && idGroup[bo.b.id]===rank);
-        bo.el.setAttribute("stroke-opacity", on?0.22:0.02);
+        bo.el.setAttribute("stroke-opacity", (bo.a.op>=1 && bo.b.op>=1)?0.22:0.02);
       });
-      if(rank!=null) fitGroup(rank);
+    }
+    function applyIsolation(rank){ isolated=rank; refreshFilter(); if(rank!=null) fitGroup(rank); }
+    // Returns the number of matches, so the search box can show a count.
+    function setQuery(q){
+      query=(q||"").toLowerCase().trim(); refreshFilter();
+      if(query==="") return 0;
+      var hits=nodes.filter(function(nd){ return uname(nd.id).toLowerCase().indexOf(query)>=0 && nd.op>=1; });
+      return hits.length;
     }
     function fitGroup(rank){
       var xs=[], ys=[];
@@ -1386,7 +1400,7 @@
       z=Math.max(0.3,Math.min(3,Math.min((W-2*pad)/bw,(H-2*pad)/bh)));
       pan.x=W/2-(minX+maxX)/2*z; pan.y=H/2-(minY+maxY)/2*z; applyView();
     }
-    fullIsolate=applyIsolation;
+    fullIsolate=applyIsolation; fullHighlight=setQuery;
 
     // A few collision-only passes so the first painted frame is already untangled.
     // Grid-binned like the live step: the old all-pairs version ran tens of millions of
@@ -1436,6 +1450,14 @@
       +" strongest connections · "+groups.groups.length+" groups · scroll to zoom, drag a node, drag the background to pan, double-click to reset";
     fullNetwork($("#full-plot"),data,groups);
     renderGroupsPanel(groups);
+    runFullSearch();   // re-apply any live search text to the freshly built graph
+  }
+  // Highlight people matching the search box; updates the "N found" hint.
+  function runFullSearch(){
+    if(typeof fullHighlight!=="function") return;
+    var q=$("#full-search").value||"";
+    var n=fullHighlight(q);
+    $("#full-search-meta").textContent = q.trim()==="" ? "" : (n+" found");
   }
   function renderGroupsPanel(groups){
     var box=$("#full-groups"); if(!box) return;
@@ -1524,6 +1546,8 @@
   $("#fullDossierBtn").addEventListener("click",openFullDossier);
   $("#full-close").addEventListener("click",closeFullDossier);
   $("#full-groups-toggle").addEventListener("click",function(){ $("#full-groups").classList.toggle("hidden"); });
+  $("#full-search").addEventListener("input",function(){ runFullSearch(); });
+  $("#full-search").addEventListener("search",function(){ runFullSearch(); }); // the clear (×) button
   $("#full-groups").addEventListener("click",function(ev){ var r=ev.target.closest(".grp"); if(r) onGroupClick(r); });
   $("#full-groups").addEventListener("keydown",function(ev){
     if(ev.key!=="Enter" && ev.key!==" ") return;
