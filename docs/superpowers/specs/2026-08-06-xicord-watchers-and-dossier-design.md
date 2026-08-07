@@ -170,6 +170,17 @@ so it passed against a null element. Replaced with assertions that each clip cir
 exists, is not at the origin, and sits exactly on its node's centre, plus one that
 each avatar image is placed over its node.
 
+## Editable max, and the opening-clump fix (2026-08-06)
+- `fullGraphNodes` became a NUMBER setting with a live input in the modal
+  (clamped 10–1000), shown as "Max people … of N recorded".
+- **Centre bug**: every node was seeded on one ring (~214px around), so a big graph
+  opened as a solid pile — measured 1144 overlapping pairs at 300 nodes — that then
+  visibly exploded outward. Fixed with a phyllotaxis (sunflower) seed on an
+  elliptical field matching the canvas, a deterministic jitter (no `Math.random`,
+  so a reset reproduces the layout), and a collision-only pre-warm before the first
+  paint. Result: 60 and 150 nodes open with zero overlaps; 300 (the cap's extreme)
+  opens ~50× better and settles quickly.
+
 ## Known limits
 - Watchers only fire for what Discord tells your client (shared servers, visible
   channels, cached presence).
