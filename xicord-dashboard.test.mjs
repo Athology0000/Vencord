@@ -270,8 +270,11 @@ const fullNetSrc = extract("fullNetwork");
 const fullApi = new Function(
     "cache", "el", "svgRoot", "widthOf", "uname", "esc", "fmtDur", "showTip", "hideTip",
     "requestAnimationFrame", "cancelAnimationFrame",
-    `var fullStop=null; var FULL_LINKS_PER_NODE=6; ${fullSrc}; ${fullNetSrc};
-     return {fullGraphData:fullGraphData, fullNetwork:fullNetwork, getStop:function(){return fullStop;}};`
+    `var fullStop=null; var fullIsolate=null; var FULL_LINKS_PER_NODE=6;
+     function groupColor(r){return "#888";}
+     ${fullSrc}; ${fullNetSrc};
+     return {fullGraphData:fullGraphData, fullNetwork:fullNetwork,
+       getStop:function(){return fullStop;}, getIsolate:function(){return fullIsolate;}};`
 )(cache, el, svgRoot, widthOf, uname, esc, fmtDur, showTip, hideTip, requestAnimationFrame, cancelAnimationFrame);
 
 // a sparse "everyone" dataset: each person linked to a handful of others
@@ -346,6 +349,36 @@ const realGroups = detectGroups(realData, 3);
 ok("real cache: grouping runs without throwing", Array.isArray(realGroups.groups));
 ok("real cache: every grouped id is a node in the graph",
     Object.keys(realGroups.idGroup).every(id => realData.ids.includes(id)));
+
+console.log("\n-- isolating a group in the graph --");
+const isoHost = new FakeEl("div");
+const strength8 = {}, msTotal8 = {};
+ids8.forEach(id => { strength8[id] = 1; msTotal8[id] = 0; });
+fullApi.fullNetwork(isoHost, { ids: ids8, links: links8, strength: strength8, msTotal: msTotal8 }, gr8);
+const iso = fullApi.getIsolate();
+ok("fullNetwork exposes an isolate hook", typeof iso === "function");
+const isoSvg = isoHost.children[0];
+const isoHits = isoSvg.all(e => e.classList.contains("net-node")); // DOM order == ids order
+const gOpacity = i => isoHits[i].parent.getAttribute("opacity");
+const gEvents = i => isoHits[i].getAttribute("pointer-events");
+const rankOf = i => gr8.idGroup[ids8[i]];
+
+iso(0);
+const inG0 = ids8.map((_, i) => rankOf(i) === 0);
+ok("isolating group 0 keeps its members fully opaque",
+    ids8.every((_, i) => !inG0[i] || gOpacity(i) === "1"), ids8.map((_, i) => gOpacity(i)).join(","));
+ok("everyone outside the group is faded", ids8.every((_, i) => inG0[i] || gOpacity(i) === "0.08"));
+ok("faded nodes are made unclickable", ids8.every((_, i) => inG0[i] || gEvents(i) === "none"));
+ok("isolated nodes stay interactive", ids8.every((_, i) => !inG0[i] || gEvents(i) === "auto"));
+// edges wholly inside the group stay visible; cross/outside edges fade
+const isoLines = isoSvg.all(e => e.tag === "line");
+ok("some edges remain visible in the isolated group", isoLines.some(l => l.getAttribute("stroke-opacity") === "0.22"));
+ok("edges leaving the group are faded", isoLines.some(l => l.getAttribute("stroke-opacity") === "0.02"));
+
+iso(null);
+ok("clearing isolation restores every node to full opacity", ids8.every((_, i) => gOpacity(i) === "1"));
+ok("clearing isolation restores clickability", ids8.every((_, i) => gEvents(i) === "auto"));
+const isoStop = fullApi.getIsolate() && fullApi.getStop(); if (isoStop) isoStop();
 
 console.log(`\n${pass} passed, ${fail} failed\n`);
 process.exit(fail ? 1 : 0);

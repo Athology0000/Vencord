@@ -185,8 +185,11 @@
     padding:12px 14px;box-shadow:0 8px 30px rgba(0,0,0,.5);font-size:13px}
   #full-groups.hidden{display:none}
   #full-groups h4{margin:0 0 8px;font-size:13px;letter-spacing:.02em}
-  #full-groups .grp{padding:7px 0;border-top:1px solid var(--line)}
+  #full-groups .grp{padding:7px 6px;margin:0 -6px;border-top:1px solid var(--line);cursor:pointer;border-radius:8px}
   #full-groups .grp:first-of-type{border-top:none}
+  #full-groups .grp:hover{background:var(--data-soft)}
+  #full-groups .grp.on{background:var(--data-soft);box-shadow:inset 2px 0 0 var(--data)}
+  #full-groups .hint-row{opacity:.5;font-size:11px;margin-top:8px;padding-top:8px;border-top:1px solid var(--line)}
   #full-groups .grp-head{display:flex;align-items:center;gap:8px}
   #full-groups .sw{width:11px;height:11px;border-radius:50%;flex:none;box-shadow:0 0 0 1px var(--surface)}
   #full-groups .grp-name{font-weight:600;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -1198,9 +1201,10 @@
     return {ids:ids,links:links,strength:strength,msTotal:msTotal,total:Object.keys(strength).length};
   }
 
-  var fullStop=null;
+  var fullStop=null, fullIsolate=null;
   function fullNetwork(host, data, groups){
     if(fullStop){ fullStop(); fullStop=null; }
+    fullIsolate=null;
     var idGroup=(groups&&groups.idGroup)||{};
     var ids=data.ids, links=data.links;
     if(!ids.length){ host.innerHTML='<div class="empty-note">No recorded calls yet.</div>'; return; }
@@ -1352,7 +1356,37 @@
       var gx=(p.x-pan.x)/z, gy=(p.y-pan.y)/z;
       z=nz; pan.x=p.x-gx*z; pan.y=p.y-gy*z; applyView();
     },{passive:false});
-    bg.addEventListener("dblclick",function(){ pan.x=0; pan.y=0; z=1; applyView(); reheat(1); });
+    bg.addEventListener("dblclick",function(){ applyIsolation(null); pan.x=0; pan.y=0; z=1; applyView(); reheat(1); });
+
+    // Isolate one detected group: keep its members bright and interactive, fade everyone
+    // else right down (and make them unclickable so you can't grab a ghost), then frame
+    // the group. Passing null restores the full graph. Opacity lives on the node <g> and
+    // the edge stroke, neither of which draw() touches, so it survives the physics loop.
+    var isolated=null;
+    function applyIsolation(rank){
+      isolated=rank;
+      nodes.forEach(function(nd){
+        var on = rank==null || idGroup[nd.id]===rank;
+        nd.g.setAttribute("opacity", on?1:0.08);
+        nd.hit.setAttribute("pointer-events", on?"auto":"none");
+      });
+      bonds.forEach(function(bo){
+        var on = rank==null || (idGroup[bo.a.id]===rank && idGroup[bo.b.id]===rank);
+        bo.el.setAttribute("stroke-opacity", on?0.22:0.02);
+      });
+      if(rank!=null) fitGroup(rank);
+    }
+    function fitGroup(rank){
+      var xs=[], ys=[];
+      nodes.forEach(function(nd){ if(idGroup[nd.id]===rank){ xs.push(nd.x); ys.push(nd.y); } });
+      if(!xs.length) return;
+      var minX=Math.min.apply(null,xs), maxX=Math.max.apply(null,xs);
+      var minY=Math.min.apply(null,ys), maxY=Math.max.apply(null,ys);
+      var pad=70, bw=Math.max(1,maxX-minX), bh=Math.max(1,maxY-minY);
+      z=Math.max(0.3,Math.min(3,Math.min((W-2*pad)/bw,(H-2*pad)/bh)));
+      pan.x=W/2-(minX+maxX)/2*z; pan.y=H/2-(minY+maxY)/2*z; applyView();
+    }
+    fullIsolate=applyIsolation;
 
     // A few collision-only passes so the first painted frame is already untangled.
     // Grid-binned like the live step: the old all-pairs version ran tens of millions of
@@ -1411,12 +1445,21 @@
       var others=g.members.filter(function(id){return id!==g.central;});
       var names=others.slice(0,6).map(function(id){return esc(uname(id));}).join(", ");
       if(others.length>6) names+=" +"+(others.length-6)+" more";
-      return '<div class="grp"><div class="grp-head">'
+      return '<div class="grp" data-rank="'+g.rank+'" role="button" tabindex="0" '
+        +'title="Click to isolate this group in the graph"><div class="grp-head">'
         +'<span class="sw" style="background:'+groupColor(g.rank)+'"></span>'
-        +'<span class="grp-name" title="'+esc(uname(g.central))+'">'+esc(uname(g.central))+'</span>'
+        +'<span class="grp-name">'+esc(uname(g.central))+'</span>'
         +'<span class="grp-n">'+g.size+' people</span></div>'
         +(names?'<div class="grp-mem">'+names+'</div>':'')+'</div>';
-    }).join("");
+    }).join("")+'<div class="hint-row">Click a group to isolate it · click it again (or double-click the background) to show everyone.</div>';
+  }
+  // Click a group row -> isolate it; click the selected one again -> show all.
+  function onGroupClick(row){
+    var box=$("#full-groups"); if(!row||!box||typeof fullIsolate!=="function") return;
+    var was=row.classList.contains("on");
+    box.querySelectorAll(".grp.on").forEach(function(r){ r.classList.remove("on"); });
+    if(was){ fullIsolate(null); }
+    else { row.classList.add("on"); fullIsolate(+row.getAttribute("data-rank")); }
   }
 
   function renderDossier(){
@@ -1481,6 +1524,10 @@
   $("#fullDossierBtn").addEventListener("click",openFullDossier);
   $("#full-close").addEventListener("click",closeFullDossier);
   $("#full-groups-toggle").addEventListener("click",function(){ $("#full-groups").classList.toggle("hidden"); });
+  $("#full-groups").addEventListener("click",function(ev){ var r=ev.target.closest(".grp"); if(r) onGroupClick(r); });
+  $("#full-groups").addEventListener("keydown",function(ev){
+    if(ev.key!=="Enter" && ev.key!==" ") return;
+    var r=ev.target.closest(".grp"); if(r){ ev.preventDefault(); onGroupClick(r); } });
   $("#full-limit").addEventListener("change",function(){ if(!$("#full-overlay").classList.contains("hidden")) renderFullDossier(); });
   document.addEventListener("keydown",function(e){
     if(e.key==="Escape" && !$("#full-overlay").classList.contains("hidden")) closeFullDossier();
