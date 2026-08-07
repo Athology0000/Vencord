@@ -83,6 +83,15 @@ user then asked for.)
 - Tested by `xicord-correlate.test.mjs` (22 assertions, extracts the real
   functions by brace-matching) and dogfooded on a sample-derived pair of accounts.
 
+## cve-lab visual restyle (2026-08-06)
+The dashboard adopts the cve-lab landing-page look: committed **grayscale, no hue
+anywhere**, pitch-black background, a soft white "spotlight" wash at the top, a
+gradient headline (bright white → grey), pill-style section eyebrows, faint-bordered
+cards with an inset top glow that brightens on hover, and monochrome bars/charts
+(the `--data` accent remapped from blue to near-white). The theme toggle stays but
+both variants are hue-free. Uses a system font stack (Inter-like) rather than the
+landing's remote Inter CDN, to keep the dashboard fully offline.
+
 ## Known limits
 - The cache is a point-in-time snapshot; re-export to refresh.
 - Dashboard only knows the users/channels present in the cache (IDs Discord had

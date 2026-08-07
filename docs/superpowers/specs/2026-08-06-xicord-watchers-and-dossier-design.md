@@ -232,6 +232,17 @@ actually loaded into the client, not the full roster of a large guild.
   the name (and time-in-call) now appears only in the hover pill, so the graph is a
   clean constellation instead of a wall of overlapping text.
 
+## Graph: nodes were hard to grab (2026-08-06)
+Two things made nodes dodge the pointer: the cursor field physically **pushed**
+nodes away from where you aimed, and merely hovering **reheated the whole sim**, so
+the layout never settled. Fixes:
+- Removed the positional push entirely — the hover swell/brighten is now purely
+  visual (no movement). Verified: nodes drift 0.00px while the cursor sweeps them.
+- Hovering no longer reheats physics. The sim settles and holds still; a separate
+  lightweight redraw loop stays alive on hover only so the pill/swell update.
+- A near-miss on the background now grabs the nearest node (within `r + 12`px)
+  instead of starting a pan, so small nodes are easy to pick up.
+
 ## Known limits
 - Game/presence time is only visible for people whose presence Discord sends your
   client (shared servers / friends), and accrues only while the plugin runs.
