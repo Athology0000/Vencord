@@ -165,6 +165,18 @@
   .acct-dot{display:inline-flex;align-items:center;justify-content:center;min-width:20px;height:20px;padding:0 5px;
     border-radius:10px;background:var(--data-soft);color:var(--data);font-size:10px;font-weight:800;text-transform:uppercase;font-style:normal}
   .conn-empty{color:var(--muted);font-size:13px;padding:8px 2px}
+  /* who-added-who rows: a person, the friends they added, and where they were found */
+  .fm-row{padding:7px 2px;border-bottom:1px solid var(--border)}
+  .fm-head{display:flex;align-items:center;gap:8px}
+  .fm-head img,.fm-head .fm-noav{width:22px;height:22px;border-radius:50%;flex:none;background:var(--surface-2)}
+  .fm-head .who{font-weight:600;font-size:13px}
+  .fm-head .conn-meta{margin-left:auto;white-space:nowrap}
+  .fm-chips{display:flex;flex-wrap:wrap;gap:4px;margin:4px 0 0 30px}
+  .fm-chip{display:inline-flex;align-items:center;gap:5px;padding:2px 8px;border-radius:11px;
+    background:var(--data-soft);color:var(--data);font-size:11px;font-style:normal;font-weight:600}
+  .fm-chip img{width:14px;height:14px;border-radius:50%}
+  .fm-chip.more{background:transparent;color:var(--muted);font-weight:400}
+  .fm-where{margin:3px 0 0 30px;color:var(--muted);font-size:11px}
   .lk-card{border:1px solid var(--border);border-radius:12px;padding:12px 14px;margin-top:10px;background:var(--surface)}
   .lk-head{font-weight:700;display:flex;align-items:center;gap:8px;margin-bottom:6px}
   .lk-id{font-family:var(--mono);font-size:11px;color:var(--muted);font-weight:400}
@@ -296,6 +308,26 @@
       </div>
     </div>
 
+    <div id="fm-section" class="hidden">
+      <p class="eyebrow" style="margin-top:26px">Who added who — every server</p>
+      <div class="grid">
+        <div class="card"><h3>Your most-added friends</h3><p class="hint">How many people across your servers have each of your friends added</p><div class="plot" id="ch-fm-friends"></div></div>
+        <div class="card"><h3>Where the additions are</h3><p class="hint">Servers the sweep found these people in</p><div class="plot" id="ch-fm-guilds"></div></div>
+      </div>
+      <div class="card wide" style="margin-top:14px">
+        <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:6px">
+          <h3 style="margin:0">People with someone added</h3>
+          <input class="search" id="fm-search" type="text" placeholder="Filter by person, or by who they added…" autocomplete="off" spellcheck="false">
+          <span class="hint" id="fm-meta" style="margin:0"></span>
+        </div>
+        <p class="hint" style="margin-top:0">Discord never reveals whose friend list you are on, so the only additions provable
+          from a client are <b>mutual</b> ones — people who added someone who is also your friend. Swept in Discord via the
+          Dossier's "Who added who — every server". A friendship has no date, so this section ignores the range buttons above.</p>
+        <div id="fm-list" class="conn-list"></div>
+        <p class="trow-more" id="fm-more"></p>
+      </div>
+    </div>
+
     <div id="dossier-section" class="hidden">
       <p class="eyebrow" style="margin-top:26px">Dossier — voice companions</p>
       <div class="card wide">
@@ -358,7 +390,7 @@
 (function(){
   "use strict";
   var $=function(s,r){return (r||document).querySelector(s);};
-  var cache=null, range="all", tableSort={k:"join",dir:-1}, tableQuery="", dossierTarget=null;
+  var cache=null, range="all", tableSort={k:"join",dir:-1}, tableQuery="", dossierTarget=null, fmQuery="";
   // Local multi-account: several of YOUR OWN exports, cross-referenced in-browser.
   // Nothing is uploaded; this is all client-side over files you loaded yourself.
   var accounts=[], activeIdx=0, lookupQuery="";
@@ -443,12 +475,14 @@
     var m=d.messages||{}; d.messages={since:m.since||0,daily:m.daily||{},byUser:m.byUser||{},byChannel:m.byChannel||{}};
     d.presence=Array.isArray(d.presence)?d.presence:[];
     d.dossiers=(d.dossiers&&typeof d.dossiers==="object")?d.dossiers:{};
+    d.friendMap=(d.friendMap&&typeof d.friendMap==="object")?d.friendMap:{};
     return d;
   }
 
   /* ---------- helpers ---------- */
   function uname(id){ var u=cache.users[id]; return (u&&u.username)||("user "+String(id).slice(0,6)); }
   function uavatar(id){ var u=cache.users[id]; return (u&&u.avatar)||""; }
+  function gname(id){ var g=cache.guilds[id]; return (g&&g.name)||("server "+String(id).slice(0,6)); }
   function cname(id){
     var c=cache.channels[id];
     if(!c) return "channel "+String(id).slice(0,6);
@@ -759,6 +793,7 @@
     barH($("#ch-traits"),tr,{dim:true});
 
     renderMessages();
+    renderFriendMap();
     renderDossier();
     renderTable(S);
     // Opened straight from the plugin's "Open in dashboard" button, which links to
@@ -1549,6 +1584,119 @@
     else { row.classList.add("on"); fullIsolate(+row.getAttribute("data-rank")); }
   }
 
+  /* ---------- who added who (Xicord Dossier's all-server sweep) ---------- */
+  // Pure, so the suite can drive them without a DOM. The snapshot only ever contains
+  // people with at least one PROVEN addition — a mutual friend — but the dashboard has
+  // to survive an older or hand-edited export, so shape is re-checked here.
+  // This JSON came off disk and may be anything, so only real, distinct id STRINGS get
+  // through. Merely checking Array.isArray let numbers and objects reach the filter,
+  // where f.toLowerCase() threw and wedged the list on the first keystroke.
+  function idList(list){
+    if(!Array.isArray(list)) return [];
+    var seen=Object.create(null), out=[];
+    for(var i=0;i<list.length;i++){
+      var v=list[i];
+      if(typeof v!=="string"||!v||seen[v]) continue;
+      seen[v]=1; out.push(v);
+    }
+    return out;
+  }
+  function friendMapRows(fm){
+    var out=[];
+    fm=fm||{};
+    for(var id in fm){
+      if(!Object.prototype.hasOwnProperty.call(fm,id)) continue;
+      var e=fm[id]; if(!e||typeof e!=="object") continue;
+      var friends=idList(e.friends);
+      if(!friends.length) continue;
+      // deduped, so a repeated id cannot inflate "added N of your friends" or make one
+      // person count twice towards a server's tally
+      out.push({id:String(id), friends:friends, guilds:idList(e.guilds), at:typeof e.at==="number"?e.at:0});
+    }
+    // most additions first, then most servers, then a stable tiebreak — the same
+    // ordering the in-Discord panel uses, so the two views never disagree
+    out.sort(function(a,b){ return b.friends.length-a.friends.length
+      || b.guilds.length-a.guilds.length || (a.id<b.id?-1:a.id>b.id?1:0); });
+    return out;
+  }
+  /** Matches the person AND the people they added — "who here added Bob?" */
+  function filterFriendMapRows(rows,q,nameOf){
+    q=String(q||"").trim().toLowerCase();
+    if(!q) return rows;
+    // ids are lower-cased too: the query already is, and a caller passing anything but a
+    // bare numeric snowflake would otherwise silently never match on id
+    return rows.filter(function(r){
+      if(r.id.toLowerCase().indexOf(q)>=0 || nameOf(r.id).toLowerCase().indexOf(q)>=0) return true;
+      return r.friends.some(function(f){ return f.toLowerCase().indexOf(q)>=0 || nameOf(f).toLowerCase().indexOf(q)>=0; });
+    });
+  }
+  /** Your friends, by how many swept people have each of them added. */
+  function topAddedFriends(rows,n){
+    var count={};
+    rows.forEach(function(r){ r.friends.forEach(function(f){ count[f]=(count[f]||0)+1; }); });
+    return Object.keys(count).map(function(f){return [f,count[f]];})
+      .sort(function(a,b){return b[1]-a[1]||(a[0]<b[0]?-1:1);}).slice(0,n||10);
+  }
+  /** Servers, by how many people with a proven addition were found in each. */
+  function topFriendGuilds(rows,n){
+    var count={};
+    rows.forEach(function(r){ r.guilds.forEach(function(g){ count[g]=(count[g]||0)+1; }); });
+    return Object.keys(count).map(function(g){return [g,count[g]];})
+      .sort(function(a,b){return b[1]-a[1]||(a[0]<b[0]?-1:1);}).slice(0,n||10);
+  }
+
+  // Rows for the active account, so typing in the filter doesn't re-sort the whole
+  // sweep (up to 20 000 people) and rebuild two SVG charts on every keystroke.
+  var fmAll=[];
+  function renderFriendMap(){
+    var sec=$("#fm-section");
+    var all=fmAll=friendMapRows(cache.friendMap);
+    if(!all.length){ sec.classList.add("hidden"); return; }
+    sec.classList.remove("hidden");
+
+    barH($("#ch-fm-friends"), topAddedFriends(all,10).map(function(e){
+      return {label:trunc(uname(e[0]),22), full:uname(e[0]), value:e[1], disp:String(e[1]),
+        tip:e[1]+" "+(e[1]===1?"person has":"people have")+" "+uname(e[0])+" added"};
+    }),{dim:true});
+    barH($("#ch-fm-guilds"), topFriendGuilds(all,10).map(function(e){
+      return {label:trunc(gname(e[0]),24), full:gname(e[0]), value:e[1], disp:String(e[1]),
+        tip:e[1]+" "+(e[1]===1?"person":"people")+" with a proven addition in "+gname(e[0])};
+    }),{dim:true});
+
+    renderFriendMapList();
+  }
+
+  /** Only the list depends on the filter — the charts describe the whole sweep. */
+  function renderFriendMapList(){
+    var all=fmAll;
+    if(!all.length) return;
+    // trimmed, so a lone space doesn't claim "N matching" while filtering nothing
+    var q=String(fmQuery||"").trim();
+    var rows=filterFriendMapRows(all,q,uname);
+    $("#fm-meta").textContent=all.length+" "+(all.length===1?"person":"people")+" found"
+      +(q?" · "+rows.length+" matching":"");
+    var shown=rows.slice(0,200);
+    $("#fm-list").innerHTML = shown.length ? shown.map(function(r){
+      var chips=r.friends.slice(0,8).map(function(f){
+        var av=uavatar(f);
+        return '<i class="fm-chip">'+(av?'<img src="'+esc(av)+'" alt="" loading="lazy">':'')
+          +'<span>'+esc(uname(f))+'</span></i>';
+      }).join("")+(r.friends.length>8?'<i class="fm-chip more">+'+(r.friends.length-8)+'</i>':"");
+      var where=r.guilds.slice(0,3).map(gname).join(", ")+(r.guilds.length>3?" +"+(r.guilds.length-3):"");
+      var av=uavatar(r.id);
+      // a srcless <img> draws a broken-image glyph in Chrome; an empty circle reads as
+      // "no avatar cached", which is the truth
+      return '<div class="fm-row"><div class="fm-head">'
+        +(av?'<img src="'+esc(av)+'" alt="" loading="lazy">':'<span class="fm-noav"></span>')
+        +'<span class="who">'+esc(uname(r.id))+'</span>'
+        +'<span class="conn-meta">added '+r.friends.length+' of your friends · '
+        +r.guilds.length+' server'+(r.guilds.length===1?'':'s')+'</span></div>'
+        +'<div class="fm-chips">'+chips+'</div>'
+        +(where?'<div class="fm-where">in '+esc(where)+'</div>':"")+'</div>';
+    }).join("") : '<div class="conn-empty">Nobody matches "'+esc(fmQuery)+'".</div>';
+    $("#fm-more").textContent = rows.length>200 ? ("Showing first 200 of "+rows.length+" — narrow with the filter.") : "";
+  }
+
   function renderDossier(){
     var D=cache.dossiers||{};
     var ids=Object.keys(D).filter(function(id){return D[id]&&D[id].companions&&Object.keys(D[id].companions).length;});
@@ -1607,6 +1755,7 @@
     });
   });
   $("#search").addEventListener("input",function(e){ tableQuery=e.target.value; if(cache) renderTable(filteredSessions()); });
+  $("#fm-search").addEventListener("input",function(e){ fmQuery=e.target.value; if(cache) renderFriendMapList(); });
   $("#dossier-select").addEventListener("change",function(e){ dossierTarget=e.target.value; if(cache) renderDossier(); });
   $("#fullDossierBtn").addEventListener("click",openFullDossier);
   $("#full-close").addEventListener("click",closeFullDossier);

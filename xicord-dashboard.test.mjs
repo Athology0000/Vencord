@@ -448,5 +448,141 @@ ok("everyone else keeps the normal ring", ids8.filter(x => x !== "C").every(x =>
 ok("focusing an unknown id returns false", focus("nobody") === false);
 const fcStop = fullApi.getStop(); if (fcStop) fcStop();
 
+console.log("\n-- who added who: the sweep's findings, as the dashboard reads them --");
+const FM = new Function(`${extract("idList")}${extract("friendMapRows")}${extract("filterFriendMapRows")}
+    ${extract("topAddedFriends")}${extract("topFriendGuilds")}
+    return { idList, friendMapRows, filterFriendMapRows, topAddedFriends, topFriendGuilds };`)();
+const fmSnap = {
+    // most additions
+    p1: { friends: ["fA", "fB", "fC"], guilds: ["g1", "g2"], at: 5 },
+    // fewer additions but more servers — additions must still win
+    p2: { friends: ["fA"], guilds: ["g1", "g2", "g3"], at: 5 },
+    p3: { friends: ["fA", "fB"], guilds: ["g1"], at: 5 },
+    // must never be listed: the view is "people who HAVE someone added"
+    p4: { friends: [], guilds: ["g1"], at: 5 },
+};
+let fmRows = FM.friendMapRows(fmSnap);
+ok("only people with a proven addition are listed", fmRows.map(r => r.id).join(",") === "p1,p3,p2", fmRows.map(r => r.id).join(","));
+ok("nobody with an empty list slips in", !fmRows.some(r => r.id === "p4"), fmRows.map(r => r.id).join(","));
+// the ordering above never has two people tied on additions, so the tiebreaks need
+// their own fixtures or a regression in them would go unnoticed
+ok("tied on additions, more servers wins", FM.friendMapRows({
+    a: { friends: ["f"], guilds: ["g1"] }, b: { friends: ["f"], guilds: ["g1", "g2"] },
+}).map(r => r.id).join(",") === "b,a");
+ok("tied on both, the id breaks it stably", FM.friendMapRows({
+    zz: { friends: ["f"], guilds: [] }, aa: { friends: ["f"], guilds: [] },
+}).map(r => r.id).join(",") === "aa,zz");
+
+console.log("\n-- a malformed or older export must not take the page down --");
+ok("a missing friendMap is just an empty list", FM.friendMapRows(undefined).length === 0);
+ok("junk entries are skipped, good ones survive",
+    FM.friendMapRows({ a: null, b: {}, c: { friends: ["f"], guilds: null }, d: { friends: "nope" } })
+        .map(r => r.id).join(",") === "c");
+ok("a null guild list reads as no servers rather than throwing",
+    FM.friendMapRows({ c: { friends: ["f"], guilds: null } })[0].guilds.length === 0);
+ok("empty ids inside a friend list are dropped",
+    FM.friendMapRows({ a: { friends: ["f", "", null], guilds: [] } })[0].friends.join(",") === "f");
+// The crash this guards: non-string entries used to survive friendMapRows, then
+// f.toLowerCase() threw inside the filter — wedging the list on the first keystroke,
+// on a page that otherwise looked perfectly healthy.
+const junkRows = FM.friendMapRows({ 111: { friends: [222333444, { a: 1 }, "555"], guilds: ["g1", 7] } });
+ok("a numeric or object id is discarded, not carried through",
+    junkRows[0].friends.join(",") === "555", JSON.stringify(junkRows[0].friends));
+ok("non-string guild ids go too", junkRows[0].guilds.join(",") === "g1", JSON.stringify(junkRows[0].guilds));
+ok("and filtering such an export no longer throws", (() => {
+    try { return FM.filterFriendMapRows(junkRows, "5", id => id).length === 1; } catch { return false; }
+})());
+ok("a person whose friends were ALL junk is dropped entirely",
+    FM.friendMapRows({ 111: { friends: [1, 2], guilds: [] } }).length === 0);
+ok("a non-object entry is skipped", FM.friendMapRows({ a: "nope", b: 7, c: { friends: ["f"], guilds: [] } })
+    .map(r => r.id).join(",") === "c");
+
+console.log("\n-- duplicates must not inflate any count --");
+const dup = FM.friendMapRows({ x: { friends: ["f", "f", "g"], guilds: ["g1", "g1"] } })[0];
+ok("a repeated friend is counted once — 'added 2 of your friends' must mean two people",
+    dup.friends.join(",") === "f,g", dup.friends.join(","));
+ok("a repeated server is counted once", dup.guilds.join(",") === "g1", dup.guilds.join(","));
+ok("so one person cannot count twice towards one server's tally",
+    FM.topFriendGuilds([dup], 5)[0][1] === 1, JSON.stringify(FM.topFriendGuilds([dup], 5)));
+
+console.log("\n-- the filter searches who they ADDED, not just who they are --");
+const fmName = id => ({ p1: "Ana", p2: "Ben", p3: "Cy", fA: "Zoe", fB: "Ivy", fC: "Max" })[id] || id;
+ok("empty query keeps everything", FM.filterFriendMapRows(fmRows, "  ", fmName).length === 3);
+ok("matches the person by name", FM.filterFriendMapRows(fmRows, "ana", fmName).map(r => r.id).join(",") === "p1");
+ok("matches the person by id", FM.filterFriendMapRows(fmRows, "p2", fmName).map(r => r.id).join(",") === "p2");
+ok("matches everyone who added a given friend — the question this view answers",
+    FM.filterFriendMapRows(fmRows, "ivy", fmName).map(r => r.id).sort().join(",") === "p1,p3");
+ok("and by that friend's id", FM.filterFriendMapRows(fmRows, "fC", fmName).map(r => r.id).join(",") === "p1");
+ok("case is ignored", FM.filterFriendMapRows(fmRows, "IVY", fmName).length === 2);
+ok("no match is empty, not everything", FM.filterFriendMapRows(fmRows, "zzz", fmName).length === 0);
+
+console.log("\n-- the two charts --");
+const topF = FM.topAddedFriends(fmRows, 10);
+ok("your friends ranked by how many people added them",
+    topF.map(e => e[0] + ":" + e[1]).join(" ") === "fA:3 fB:2 fC:1", JSON.stringify(topF));
+ok("the cap is honoured", FM.topAddedFriends(fmRows, 2).length === 2);
+const topG = FM.topFriendGuilds(fmRows, 10);
+ok("servers ranked by how many such people were found there",
+    topG.map(e => e[0] + ":" + e[1]).join(" ") === "g1:3 g2:2 g3:1", JSON.stringify(topG));
+ok("a person in two servers counts once in each",
+    FM.topFriendGuilds([{ id: "x", friends: ["f"], guilds: ["g1", "g2"] }], 5)
+        .map(e => e[0] + ":" + e[1]).join(" ") === "g1:1 g2:1");
+ok("no rows means empty charts, not a crash",
+    FM.topAddedFriends([], 10).length === 0 && FM.topFriendGuilds([], 10).length === 0);
+
+console.log("\n-- the list HTML itself: escaping, the chip overflow, the 200 cap --");
+// renderFriendMapList is what actually ships markup; the pure functions above prove
+// nothing about the strings written into the page.
+// esc() is a one-liner whose regex character class contains a quote — the brace matcher
+// above reads that as a string literal and loses its balance, so take it by line.
+const escFn = new Function(`${/^\s*function esc\(.*$/m.exec(HTML)[0]}; return esc;`)();
+const fmHosts = {};
+const fmDollar = sel => (fmHosts[sel] ||= { _t: "", _h: "", set textContent(v) { this._t = v; }, get textContent() { return this._t; }, set innerHTML(v) { this._h = v; }, get innerHTML() { return this._h; } });
+function makeList(rows, query) {
+    const names = {}, avs = {};
+    rows.forEach(r => { names[r.id] = r.name ?? r.id; (r.friends || []).forEach(f => { names[f] ||= f; }); });
+    const fn = new Function("$", "fmAll", "fmQuery", "filterFriendMapRows", "uname", "uavatar", "gname", "esc",
+        `${extract("renderFriendMapList")}; renderFriendMapList(); return null;`);
+    fn(fmDollar, rows, query || "",
+        new Function(`${extract("filterFriendMapRows")}; return filterFriendMapRows;`)(),
+        id => names[id] ?? id, id => avs[id] ?? "", id => "srv " + id,
+        escFn);
+    return { html: fmHosts["#fm-list"].innerHTML, meta: fmHosts["#fm-meta"].textContent, more: fmHosts["#fm-more"].textContent };
+}
+
+let L = makeList([{ id: "u1", name: '<img src=x onerror=alert(1)>', friends: ["f1"], guilds: ["g1"] }]);
+ok("a username carrying HTML is escaped, not injected",
+    L.html.indexOf("<img src=x") < 0 && L.html.indexOf("&lt;img") >= 0, L.html.slice(0, 220));
+// "onerror" survives as inert TEXT — that is the point. What must not survive is the
+// markup around it, so assert the whole name landed escaped inside a normal row.
+ok("the row still renders that person, with the name as plain text",
+    L.html.indexOf("fm-row") >= 0
+    && L.html.indexOf("&lt;img src=x onerror=alert(1)&gt;") >= 0, L.html.slice(0, 260));
+
+L = makeList([{ id: "u1", friends: ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j"], guilds: ["g1"] }]);
+ok("at most 8 friend chips are drawn", (L.html.match(/class="fm-chip"/g) || []).length === 8,
+    String((L.html.match(/class="fm-chip"/g) || []).length));
+ok("the rest collapse into a +N chip", L.html.indexOf('class="fm-chip more">+2<') >= 0, L.html.slice(-260));
+ok("the meta still reports the true total", L.html.indexOf("added 10 of your friends") >= 0);
+
+L = makeList([{ id: "u1", friends: ["a"], guilds: ["g1", "g2", "g3", "g4", "g5"] }]);
+ok("only the first three servers are named, with a +N", L.html.indexOf("+2") >= 0 && L.html.indexOf("srv g4") < 0, L.html.slice(-200));
+
+const fmMany = Array.from({ length: 260 }, (_, i) => ({ id: "u" + String(i).padStart(3, "0"), friends: ["f"], guilds: [] }));
+L = makeList(fmMany);
+ok("the list is capped at 200 rows", (L.html.match(/class="fm-row"/g) || []).length === 200,
+    String((L.html.match(/class="fm-row"/g) || []).length));
+ok("and says so rather than silently truncating", /Showing first 200 of 260/.test(L.more), L.more);
+ok("under the cap there is no truncation note", makeList(fmMany.slice(0, 5)).more === "", makeList(fmMany.slice(0, 5)).more);
+
+L = makeList([{ id: "u1", friends: ["f1"], guilds: [] }], "zzz");
+ok("no matches gives the empty state, not a blank panel", L.html.indexOf("Nobody matches") >= 0, L.html);
+ok("and the query in that message is escaped too",
+    makeList([{ id: "u1", friends: ["f1"], guilds: [] }], "<b>x").html.indexOf("<b>x") < 0);
+ok("the meta line reports found and matching separately", /1 person found · 0 matching/.test(L.meta), L.meta);
+ok("a whitespace-only query is not treated as a filter",
+    makeList([{ id: "u1", friends: ["f1"], guilds: [] }], "   ").meta === "1 person found",
+    makeList([{ id: "u1", friends: ["f1"], guilds: [] }], "   ").meta);
+
 console.log(`\n${pass} passed, ${fail} failed\n`);
 process.exit(fail ? 1 : 0);
