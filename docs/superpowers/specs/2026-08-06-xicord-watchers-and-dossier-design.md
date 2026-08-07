@@ -181,6 +181,27 @@ each avatar image is placed over its node.
   paint. Result: 60 and 150 nodes open with zero overlaps; 300 (the cap's extreme)
   opens ~50× better and settles quickly.
 
+## Locked calls + one-time member sweep (2026-08-06)
+**Locked/hidden channels were missed.** `reconcile` derived the guild id only from
+`ChannelStore.getChannel(channelId)?.guild_id`, but a channel you can't view/join
+is often not in `ChannelStore`, so `guildId` came back undefined, `inPublic` was
+false, and the call was skipped entirely — even though the client can see who's in
+it. Two fixes: take the guild id from the **voice state** (`vs.guildId ??
+channel?.guild_id`), and a new `channelOccupants()` that falls back from the
+per-channel voice map (which can be empty for a locked channel) to the guild-wide
+`getAllVoiceStates()[guildId]` filtered by channel. Result: companions in locked
+calls are now recorded. A call with no derivable guild anywhere is still treated as
+a DM/group call and ignored, as before.
+
+**Member sweep is now once-per-guild + incremental.** Previously each modal open
+re-sliced 200 of the current guild's members. Now `sweepGuildMembers(guildId)`
+queues the whole loaded list a single time (tracked in `sweptGuilds`), and a
+`GUILD_MEMBER_ADD` subscription scans each newcomer as they join. Still gated by
+the `scanMembers` setting and Mutuals' 2.5s throttle/cache, so it's a slow
+background fill. `MEMBER_SWEEP_CAP` (5000) is just a pathological-guild guard.
+Limit unchanged from before: `getMemberIds` only returns members Discord has
+actually loaded into the client, not the full roster of a large guild.
+
 ## Known limits
 - Watchers only fire for what Discord tells your client (shared servers, visible
   channels, cached presence).
