@@ -150,7 +150,7 @@ async function readAllPools() {
     const out = [];
     for (const n of names) {
         if (!n.endsWith(".json")) continue;
-        out.push(await readJson(path.join(POOL_DIR, n), { people: {}, calls: {} }));
+        out.push(await readJson(path.join(POOL_DIR, n), { people: {}, calls: {}, users: {} }));
     }
     return out;
 }
@@ -247,6 +247,9 @@ const server = http.createServer(async (req, res) => {
         const slices = await readAllSlices().catch(() => []);
         return send(res, 200, { ok: true, service: "xicord-sync", version: VERSION, devices: slices.length });
     }
+    if (url === "/app" || url === "/data") {
+        return sendHtml(res, 200, pages.appPage());
+    }
     if (url === "/" || url === "/login") {
         const pool = mergeAllPools(await readAllPools().catch(() => []));
         let devices = 0;
@@ -297,7 +300,11 @@ const server = http.createServer(async (req, res) => {
         return send(res, 200, {
             ...pooled,
             syncedAt: Date.now(),
-            counts: { people: Object.keys(pooled.people).length, calls: Object.keys(pooled.calls).length }
+            counts: {
+                people: Object.keys(pooled.people).length,
+                calls: Object.keys(pooled.calls).length,
+                users: Object.keys(pooled.users || {}).length
+            }
         });
     }
     if (url === "/v1/pool" && req.method === "POST") {
@@ -310,14 +317,14 @@ const server = http.createServer(async (req, res) => {
         }
         const clean = sanitizePool(parsed);
         const merged = await withLock(`pool:${owner}`, async () => {
-            const next = mergePool(await readJson(poolFile(owner), { people: {}, calls: {} }), clean);
+            const next = mergePool(await readJson(poolFile(owner), { people: {}, calls: {}, users: {} }), clean);
             await writeJson(poolFile(owner), next);
             return next;
         });
         return send(res, 200, {
             ok: true, user: owner,
-            accepted: { people: Object.keys(clean.people).length, calls: Object.keys(clean.calls).length },
-            slice: { people: Object.keys(merged.people).length, calls: Object.keys(merged.calls).length }
+            accepted: { people: Object.keys(clean.people).length, calls: Object.keys(clean.calls).length, users: Object.keys(clean.users || {}).length },
+            slice: { people: Object.keys(merged.people).length, calls: Object.keys(merged.calls).length, users: Object.keys(merged.users || {}).length }
         });
     }
 

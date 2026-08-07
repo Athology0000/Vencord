@@ -76,9 +76,10 @@ ${stats}
   <li>You get a token. Paste it into the plugin's <b>Sync token</b> setting.</li>
   <li>The plugin syncs from then on, and any other device you sign in joins the same account.</li>
 </ol>
-<p class="muted">Shared observations — who was in a call with whom, and where — pool across
-everyone. Your friend graph, watchlist and notes stay private to you, because they only mean
-anything measured from your own account.</p>`);
+<a class="btn ghost" href="/app">View my data</a>
+<p class="muted" style="margin-top:18px">Shared observations — who was in a call with whom, and
+where — pool across everyone. Your friend graph, watchlist and notes stay private to you, because
+they only mean anything measured from your own account.</p>`);
 }
 
 /** Shown once, straight after a successful sign-in. */
@@ -120,4 +121,91 @@ ${detail ? `<p class="lead">${esc(detail)}</p>` : ""}
 <a class="btn ghost" href="/">Back</a>`);
 }
 
-module.exports = { loginPage, tokenPage, errorPage, esc };
+/**
+ * The data itself, on a phone.
+ *
+ * Reads /v1/pool with a token kept in localStorage — the local dashboard is bound to
+ * 127.0.0.1 and cannot be reached from a phone at all, which is the whole reason this
+ * page exists. Rendering happens client-side so the server stays a plain JSON store.
+ */
+function appPage() {
+    return shell("Your data — Xicord Sync", `
+<h1>Your data</h1>
+<div id="gate">
+  <p class="lead">Paste the token you were given after signing in.</p>
+  <div class="card">
+    <input id="tok" type="text" inputmode="text" autocomplete="off" autocapitalize="off"
+      spellcheck="false" placeholder="xic-…"
+      style="width:100%;padding:13px;border-radius:9px;border:1px solid #2c2c33;background:#0a0a0c;color:#e8e8ea;font:14px ui-monospace,monospace">
+    <button class="btn" id="go" style="margin-top:10px">Load my data</button>
+  </div>
+  <a class="btn ghost" href="/">Need a token? Sign in</a>
+</div>
+
+<div id="app" hidden>
+  <div class="card"><div id="stats"></div></div>
+  <input id="q" type="search" placeholder="Search by name or id…" autocomplete="off"
+    style="width:100%;padding:13px;border-radius:9px;border:1px solid #2c2c33;background:#141418;color:#e8e8ea;font:15px inherit">
+  <div id="list"></div>
+  <button class="btn ghost" id="out" style="margin-top:18px">Forget token</button>
+</div>
+
+<script>
+var K="xicord-sync-token", pool=null;
+var $=function(i){return document.getElementById(i)};
+var esc2=function(t){return String(t).replace(/[&<>"]/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c]})};
+function fmt(ms){var s=Math.round(ms/1000);if(s<60)return s+"s";var m=Math.round(s/60);
+  if(m<60)return m+"m";var h=Math.floor(m/60);return h<48?(h+"h "+(m%60)+"m"):(Math.round(h/24)+"d")}
+function ago(t){if(!t)return"—";var s=Math.floor((Date.now()-t)/1000);
+  if(s<3600)return Math.floor(s/60)+"m ago";if(s<86400)return Math.floor(s/3600)+"h ago";return Math.floor(s/86400)+"d ago"}
+
+async function load(tok){
+  var r=await fetch("/v1/pool",{headers:{Authorization:"Bearer "+tok}});
+  if(!r.ok) throw new Error(r.status===401?"That token was not accepted.":"Server said "+r.status);
+  return r.json();
+}
+function render(){
+  var people=pool.people||{}, calls=pool.calls||{}, users=pool.users||{};
+  var nm=function(id){var u=users[id];return (u&&u.username)||id};
+  // rank by total time in call, which is the most useful single ordering on a small screen
+  var tot={};
+  for(var k in calls){var p=k.split("|");var c=calls[k];
+    tot[p[0]]=(tot[p[0]]||0)+(c.ms||0); tot[p[1]]=(tot[p[1]]||0)+(c.ms||0);}
+  $("stats").innerHTML="<b>"+Object.keys(people).length.toLocaleString()+"</b> people · <b>"
+    +Object.keys(calls).length.toLocaleString()+"</b> call pairs · <b>"
+    +Object.keys(users).length.toLocaleString()+"</b> named";
+  var q=($("q").value||"").trim();
+  var lq=q.toLowerCase();
+  var ids=Object.keys(people).filter(function(id){
+    return !q || id.indexOf(q)>=0 || nm(id).toLowerCase().indexOf(lq)>=0;})
+    .sort(function(a,b){return (tot[b]||0)-(tot[a]||0)}).slice(0,60);
+  $("list").innerHTML = ids.length? ids.map(function(id){
+    var partners=[];
+    for(var k in calls){var p=k.split("|");
+      if(p[0]===id)partners.push([p[1],calls[k]]); else if(p[1]===id)partners.push([p[0],calls[k]]);}
+    partners.sort(function(a,b){return (b[1].ms||0)-(a[1].ms||0)});
+    var top=partners.slice(0,5).map(function(x){
+      return '<div class="muted" style="margin-left:12px">'+esc2(nm(x[0]))+" · "+fmt(x[1].ms||0)+" · "+(x[1].count||0)+"×</div>";
+    }).join("");
+    return '<div class="card"><div><b>'+esc2(nm(id))+'</b> <span class="muted">'+id+"</span></div>"
+      +'<div class="muted">'+fmt(tot[id]||0)+" in call · "+partners.length+" "
+      +(partners.length===1?"partner":"partners")+" · "+(people[id].guilds||[]).length+" servers · last "
+      +ago(people[id].last)+"</div>"+top+"</div>";
+  }).join("") : '<p class="muted">Nobody matches that.</p>';
+}
+$("go").addEventListener("click", async function(){
+  var t=$("tok").value.trim(); if(!t) return;
+  this.textContent="Loading…"; this.disabled=true;
+  try{ pool=await load(t); localStorage.setItem(K,t); $("gate").hidden=true; $("app").hidden=false; render(); }
+  catch(e){ alert(e.message); this.textContent="Load my data"; this.disabled=false; }
+});
+$("q").addEventListener("input", function(){ if(pool) render(); });
+$("out").addEventListener("click", function(){ localStorage.removeItem(K); location.reload(); });
+(async function(){
+  var t=localStorage.getItem(K); if(!t) return;
+  try{ pool=await load(t); $("gate").hidden=true; $("app").hidden=false; render(); }catch(e){}
+})();
+</script>`);
+}
+
+module.exports = { loginPage, tokenPage, errorPage, appPage, esc };

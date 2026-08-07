@@ -60,9 +60,20 @@ function mergeCall(a = {}, b = {}) {
     };
 }
 
+/**
+ * A name is objective — the same whoever looks it up — so it pools like everything else
+ * here. The fresher resolution wins, which is how a rename eventually reaches everyone.
+ * Without this the shared view is nothing but snowflakes.
+ */
+function mergeUser(a, b) {
+    if (!a) return b;
+    if (!b) return a;
+    return (b.at ?? 0) > (a.at ?? 0) ? b : a;
+}
+
 /** Combine two pool slices. Commutative and idempotent. */
 function mergePool(a = {}, b = {}) {
-    const out = { people: {}, calls: {} };
+    const out = { people: {}, calls: {}, users: {} };
     const pa = a.people || {}, pb = b.people || {};
     for (const id of new Set([...Object.keys(pa), ...Object.keys(pb)])) {
         out.people[id] = mergePerson(pa[id], pb[id]);
@@ -71,18 +82,22 @@ function mergePool(a = {}, b = {}) {
     for (const k of new Set([...Object.keys(ca), ...Object.keys(cb)])) {
         out.calls[k] = mergeCall(ca[k], cb[k]);
     }
+    const ua = a.users || {}, ub = b.users || {};
+    for (const id of new Set([...Object.keys(ua), ...Object.keys(ub)])) {
+        out.users[id] = mergeUser(ua[id], ub[id]);
+    }
     return out;
 }
 
 function mergeAllPools(slices) {
-    let out = { people: {}, calls: {} };
+    let out = { people: {}, calls: {}, users: {} };
     for (const s of slices) out = mergePool(out, s);
     return out;
 }
 
 /** Reject anything that is not the shape we store. */
 function sanitizePool(payload) {
-    const out = { people: {}, calls: {} };
+    const out = { people: {}, calls: {}, users: {} };
     if (!payload || typeof payload !== "object") return out;
 
     for (const [id, p] of Object.entries(payload.people || {})) {
@@ -107,6 +122,13 @@ function sanitizePool(payload) {
             guilds: unionIds(Array.isArray(c.guilds) ? c.guilds : [], [])
         };
         out.calls[key] = out.calls[key] ? mergeCall(out.calls[key], rec) : rec;
+    }
+    for (const [id, u] of Object.entries(payload.users || {})) {
+        if (!isSnowflake(id) || !u || typeof u !== "object") continue;
+        const username = typeof u.username === "string" ? u.username.slice(0, 128) : "";
+        if (!username) continue;
+        const avatar = typeof u.avatar === "string" && /^https?:\/\//.test(u.avatar) ? u.avatar.slice(0, 512) : "";
+        out.users[id] = { username, avatar, at: maxNum(u.at, 0) };
     }
     return out;
 }
@@ -164,6 +186,6 @@ function mergePrivate(a = {}, b = {}) {
 }
 
 module.exports = {
-    mergePool, mergeAllPools, mergeCall, mergePerson, sanitizePool,
+    mergePool, mergeAllPools, mergeCall, mergePerson, mergeUser, sanitizePool,
     sanitizePrivate, mergePrivate, pairKey, isSnowflake, maxNum, minStamp
 };
