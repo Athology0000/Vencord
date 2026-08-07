@@ -136,6 +136,21 @@ which returns people who are friends with **both you and them**. So:
 - Anyone the target added who is *not also your friend* is invisible to the client
   and stays plain. This cannot be fixed by more code — the data is not served.
 
+## Spacing regression, and automatic mutual scanning (2026-08-06)
+**Regression fixed.** Making link length adapt to node count (for the 300-node full
+view) also shrank the one-person view: its spokes fell from ~150px to ~70px and the
+companions bunched around the target. `ForceGraph` now takes a `spread` multiplier
+(2.1 for the ego view), clamped so a sparse graph still fits the canvas
+(`min(W,HH)/2 - 40`). Collision padding went 6 → 14px for general breathing room.
+Regression test asserts the nearest companion sits ≥80px out — the strongest bond
+rests closest *by design*, and the pre-regression code put it at 82.5px.
+
+**Automatic mutual scanning.** Opening the Dossier now queues a mutual-friend scan
+for every person in it, and (setting `scanMembers`, default on) for the current
+server's loaded member list, capped at `MEMBER_SCAN_CAP = 200` per open. Xicord
+Mutuals throttles to one fetch every 2.5s and caches, so this is a slow background
+fill; an uncapped member sweep would otherwise run for hours.
+
 ## Known limits
 - Watchers only fire for what Discord tells your client (shared servers, visible
   channels, cached presence).
