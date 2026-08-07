@@ -185,7 +185,48 @@ function mergePrivate(a = {}, b = {}) {
     return out;
 }
 
+/**
+ * Every contributor's friend graph, unioned into one.
+ *
+ * The note at the top of this file says account-relative data cannot be pooled, because
+ * two accounts give two different answers about the same person. That is right about
+ * merging by COUNT and right about reading absence as denial — but not about this union.
+ * `getMutuals(X)` returns `friends(asker) ∩ friends(X)`, so every name it yields is one X
+ * genuinely added. Two accounts see two different SLICES of the same true set, and their
+ * union is still entirely true, just less incomplete.
+ *
+ * So: union across owners, never max or sum. What you must NOT do is read a missing name
+ * as "X has not added them" — it only ever means nobody who could see it has looked.
+ *
+ * Retraction still works, and this is why the per-owner blobs stay the storage: an
+ * unfriending removes the name from that owner's slice (mergePrivate, fresher-wins), and
+ * it leaves the union as soon as no remaining contributor still vouches for it. A name
+ * survives exactly as long as somebody can still prove it, which is the correct answer.
+ */
+function mergeFriendGraphs(blobs) {
+    const out = {};
+    for (const blob of blobs || []) {
+        for (const [id, f] of Object.entries((blob && blob.friends) || {})) {
+            if (!isSnowflake(id) || !f) continue;
+            const friends = Array.isArray(f.friends) ? f.friends.filter(isSnowflake) : [];
+            const guilds = Array.isArray(f.guilds) ? f.guilds.filter(isSnowflake) : [];
+            const prev = out[id];
+            if (!prev) {
+                // `sources` is what makes a claim auditable: a name in here is only as
+                // good as the number of contributors still standing behind it.
+                out[id] = { friends: unionIds(friends, []), guilds: unionIds(guilds, []), at: maxNum(f.at, 0), sources: 1 };
+                continue;
+            }
+            prev.friends = unionIds(prev.friends, friends);
+            prev.guilds = unionIds(prev.guilds, guilds);
+            prev.at = maxNum(prev.at, f.at);
+            prev.sources++;
+        }
+    }
+    return out;
+}
+
 module.exports = {
     mergePool, mergeAllPools, mergeCall, mergePerson, mergeUser, sanitizePool,
-    sanitizePrivate, mergePrivate, pairKey, isSnowflake, maxNum, minStamp
+    sanitizePrivate, mergePrivate, mergeFriendGraphs, pairKey, isSnowflake, maxNum, minStamp
 };

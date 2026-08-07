@@ -17,7 +17,7 @@ const fsp = require("fs/promises");
 const path = require("path");
 const crypto = require("crypto");
 const { mergeAll, mergeSnapshot, sanitize } = require("./merge");
-const { mergeAllPools, mergePool, sanitizePool, sanitizePrivate, mergePrivate } = require("./pool");
+const { mergeAllPools, mergePool, sanitizePool, sanitizePrivate, mergePrivate, mergeFriendGraphs } = require("./pool");
 const auth = require("./auth");
 const pages = require("./pages");
 
@@ -143,6 +143,21 @@ async function writeJson(file, data) {
 }
 const poolFile = id => path.join(POOL_DIR, `${id}.json`);
 const userFile = id => path.join(USERS_DIR, `${id}.json`);
+
+/**
+ * Every contributor.s private blob. Only the friend graph is ever taken from these —
+ * watchlists and notes stay private — and the caller unions them for the shared pull.
+ */
+async function readAllUserBlobs() {
+    let names = [];
+    try { names = await fsp.readdir(USERS_DIR); } catch { return []; }
+    const out = [];
+    for (const n of names) {
+        if (!n.endsWith(".json")) continue;
+        out.push(await readJson(path.join(USERS_DIR, n), { friends: {} }));
+    }
+    return out;
+}
 
 async function readAllPools() {
     let names = [];
@@ -295,15 +310,22 @@ const server = http.createServer(async (req, res) => {
     /* ---- v2: the shared pool ---- */
     if (url === "/v1/pool" && req.method === "GET") {
         const pooled = mergeAllPools(await readAllPools());
+        // The friend graph is pooled too: every contributor sees only their own slice of
+        // any given person's friends, so the union is the only complete picture available.
+        // Read from the private blobs rather than duplicated into the pool files, so an
+        // unfriending still retracts through the existing fresher-wins merge.
+        const friends = mergeFriendGraphs(await readAllUserBlobs());
         // counts go under `counts`: spreading `pooled` and then setting `people`/`calls`
         // replaced the records with their own lengths, so a pull returned two numbers
         return send(res, 200, {
             ...pooled,
+            friends,
             syncedAt: Date.now(),
             counts: {
                 people: Object.keys(pooled.people).length,
                 calls: Object.keys(pooled.calls).length,
-                users: Object.keys(pooled.users || {}).length
+                users: Object.keys(pooled.users || {}).length,
+                friends: Object.keys(friends).length
             }
         });
     }
