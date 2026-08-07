@@ -108,6 +108,34 @@ so the same component drives both views:
   The cutoff fixed that *and* made the sim 5× faster (1.90ms → 0.38ms at 400).
   The inward centring pull also scales with `√n` to balance the extra outward push.
 
+## Dossier graph: zoom, avatars, hover pill, friend rings (2026-08-06)
+- **Zoom**: scroll wheel plus −/+/Reset buttons. The root group's transform became
+  `translate(pan) scale(z)`, clamped to 0.35–4×. Wheel zoom is anchored at the
+  cursor (solve for the pan that keeps the graph point under it fixed), and the
+  pointer→graph conversion divides by `z`.
+- **Avatars**: each node is a `<clipPath>`ed `<image>` over the coloured disc, with
+  a stroked ring on top. The disc and initial sit underneath, so a failed avatar
+  load degrades to the old look with no error handling. Requested at 64px (128 for
+  the ego centre) because a full graph can ask for hundreds.
+- **Hover pill**: username plus time-in-call, drawn *outside* the panned/zoomed
+  group so it stays a constant size at any zoom. Hover is resolved in the sim loop
+  (nearest node within its hit radius) rather than with per-node listeners. Width
+  is approximated from character count — SVG has no text metrics without a reflow.
+
+### Friends vs call-only — and the hard limit
+A **gold ring** marks a proven friendship, a plain ring means "only ever seen in a
+call together".
+
+**Discord does not expose another account's friend list.** The only friendship
+provable for someone else is a *mutual* one — via `/users/{id}/relationships`,
+which returns people who are friends with **both you and them**. So:
+
+- Ego view: gold = a mutual friend of that target (needs Xicord Mutuals enabled and
+  scanned; it triggers a scan on open).
+- Full view: gold = **your** own friend, since there is no single subject.
+- Anyone the target added who is *not also your friend* is invisible to the client
+  and stays plain. This cannot be fixed by more code — the data is not served.
+
 ## Known limits
 - Watchers only fire for what Discord tells your client (shared servers, visible
   channels, cached presence).
