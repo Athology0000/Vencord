@@ -62,6 +62,27 @@ The Cache modal gained **Import / Restore…**: it reads a cache JSON and writes
 into the plugins (their onChange handlers pick it up; Traits/Watchlist read
 live). Makes Cache a backup + machine-migration tool. Overwrites those lists.
 
+## Local multi-account correlation (2026-08-06)
+Purely local, over exports **you own** — nothing is uploaded, no server, no API,
+no third-party data ingestion. (A hosted, credential'd, multi-contributor
+ingestion service was explicitly declined; this is the local-only version the
+user then asked for.)
+
+- The dashboard now **accumulates** accounts instead of replacing: dropping /
+  choosing several exports adds them all, re-loading the same account (same
+  `self.id`) refreshes in place. A chip row switches the active per-account view.
+- **"Your accounts, cross-referenced"** section (shown once ≥2 are loaded), built
+  from pure functions so it is testable headlessly:
+  - `crossAccountLinks(accounts)` — people appearing in ≥2 accounts' data, guilds
+    shared across accounts, and *direct* links where one account has actually
+    recorded another (matched by `self.id`).
+  - `lookupAcross(accounts, query)` — type a username (substring, case-insensitive)
+    or an id; returns every account that has data on them and a `footprint`
+    (voice sessions + time, messages, online time, dossier companions, shared
+    guilds, and whether that id is one of your own accounts).
+- Tested by `xicord-correlate.test.mjs` (22 assertions, extracts the real
+  functions by brace-matching) and dogfooded on a sample-derived pair of accounts.
+
 ## Known limits
 - The cache is a point-in-time snapshot; re-export to refresh.
 - Dashboard only knows the users/channels present in the cache (IDs Discord had
