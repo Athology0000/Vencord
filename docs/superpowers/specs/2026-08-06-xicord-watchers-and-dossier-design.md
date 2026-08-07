@@ -219,9 +219,23 @@ actually loaded into the client, not the full roster of a large guild.
   large dossier) is replaced by a search box; the list only renders once you type,
   filtering by name or id. The person you're viewing still shows regardless.
 
+## Offload big graphs to the dashboard, hover-only labels (2026-08-06)
+- **Lag fix.** The in-Discord full graph runs a per-frame O(n²) force sim plus
+  hundreds of animated SVG nodes inside Discord's own renderer, which is the source
+  of the lag on large dossiers. Above `heavyGraphNodes` (setting, default 90) the
+  full view no longer animates in Discord: it shows a card with **Open in
+  dashboard** (opens `dashboardUrl`, default `http://localhost:8787`, via
+  `VencordNative.native.openExternal`) plus a "render here anyway" escape. The
+  standalone dashboard draws the same data in the browser, where it's smooth. An
+  "Open in dashboard ↗" button also sits by the view toggle at all times.
+- **Hover-only labels.** Persistent node-name text is removed from all graph views;
+  the name (and time-in-call) now appears only in the hover pill, so the graph is a
+  clean constellation instead of a wall of overlapping text.
+
 ## Known limits
 - Game/presence time is only visible for people whose presence Discord sends your
   client (shared servers / friends), and accrues only while the plugin runs.
+- "Open in dashboard" needs the local dashboard running (start.bat) at dashboardUrl.
 - Watchers only fire for what Discord tells your client (shared servers, visible
   channels, cached presence).
 - Dossier co-presence is observational and public-VC only; it grows only while
