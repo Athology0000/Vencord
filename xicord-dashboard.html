@@ -180,6 +180,19 @@
   #full-bar h3{margin:0;font-size:15px}
   #full-plot{flex:1;min-height:0;overflow:hidden}
   #full-plot svg{display:block}
+  #full-groups{position:absolute;top:60px;right:14px;width:270px;max-height:calc(100% - 84px);
+    overflow:auto;background:var(--surface);border:1px solid var(--line);border-radius:12px;
+    padding:12px 14px;box-shadow:0 8px 30px rgba(0,0,0,.5);font-size:13px}
+  #full-groups.hidden{display:none}
+  #full-groups h4{margin:0 0 8px;font-size:13px;letter-spacing:.02em}
+  #full-groups .grp{padding:7px 0;border-top:1px solid var(--line)}
+  #full-groups .grp:first-of-type{border-top:none}
+  #full-groups .grp-head{display:flex;align-items:center;gap:8px}
+  #full-groups .sw{width:11px;height:11px;border-radius:50%;flex:none;box-shadow:0 0 0 1px var(--surface)}
+  #full-groups .grp-name{font-weight:600;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  #full-groups .grp-n{opacity:.55;font-size:11px}
+  #full-groups .grp-mem{margin-top:3px;opacity:.65;font-size:11px;line-height:1.5;padding-left:19px}
+  #full-groups .empty-note{opacity:.6}
   .foot{margin-top:30px;color:var(--muted);font-size:12px;text-align:center}
   .foot code{font-family:var(--mono);background:var(--surface);padding:1px 6px;border-radius:5px;border:1px solid var(--border)}
 </style>
@@ -293,9 +306,11 @@
                  style="width:88px;margin-left:6px" value="300">
         </label>
         <span class="hint" id="full-meta" style="margin:0"></span>
+        <button class="btn" id="full-groups-toggle" title="Show / hide detected friend groups">Groups</button>
         <button class="btn" id="full-close" style="margin-left:auto">Close (Esc)</button>
       </div>
       <div id="full-plot"></div>
+      <div id="full-groups"></div>
     </div>
 
     <p class="eyebrow" style="margin-top:26px">Sessions</p>
@@ -1077,6 +1092,62 @@
     else reheat(1);
   }
 
+  /* ---------- auto-grouping: who hangs out with whom ---------- */
+  // The one place the dashboard uses hue: a muted categorical palette to tell the
+  // detected friend-groups apart (grey can't encode a dozen distinct categories).
+  // Ungrouped people stay the neutral --data-2. Swap for greys if you want it hue-free.
+  var GROUP_COLORS=["#6f88ff","#4bd1c0","#e8a13a","#e06666","#b06fe0","#7fce5a",
+    "#e070b0","#6ec3e0","#c9a24b","#8f9bb3","#5ad1a0","#d98cff"];
+  function groupColor(rank){ return GROUP_COLORS[rank%GROUP_COLORS.length]; }
+
+  // Community detection on the co-presence graph (one level of Louvain / modularity
+  // local-moving): start everyone in their own community, then repeatedly move each
+  // person into the neighbouring community that best raises modularity until nothing
+  // moves. Dense pockets — people who are mostly in calls with each other — fall out
+  // as groups. Deterministic (fixed node order), ~O(passes * edges). Returns groups
+  // of at least `minSize`, ranked by size, plus an id->group-rank map for colouring.
+  function detectGroups(data, minSize){
+    var ids=data.ids, links=data.links||[], n=ids.length; minSize=minSize||3;
+    var adj=[], k=new Array(n), m2=0, i;
+    for(i=0;i<n;i++){ adj.push([]); k[i]=0; }
+    links.forEach(function(l){ var w=l.w||1;
+      if(l.a==null||l.b==null||l.a>=n||l.b>=n) return;
+      adj[l.a].push({t:l.b,w:w}); adj[l.b].push({t:l.a,w:w});
+      k[l.a]+=w; k[l.b]+=w; m2+=2*w; });
+    if(m2===0) return {groups:[], idGroup:{}, comm:[]};
+    var comm=new Array(n), stot=new Array(n);
+    for(i=0;i<n;i++){ comm[i]=i; stot[i]=k[i]; }
+    var improved=true, passes=0;
+    while(improved && passes<30){
+      improved=false; passes++;
+      for(i=0;i<n;i++){
+        var ci=comm[i], ki=k[i];
+        stot[ci]-=ki;                          // pull i out of its community
+        var wto={}; adj[i].forEach(function(e){ var c=comm[e.t]; wto[c]=(wto[c]||0)+e.w; });
+        var best=ci, bestGain=(wto[ci]||0)-stot[ci]*ki/m2;
+        for(var cc in wto){ var c=+cc, gain=wto[cc]-stot[c]*ki/m2;
+          if(gain>bestGain+1e-9){ bestGain=gain; best=c; } }
+        comm[i]=best; stot[best]+=ki;
+        if(best!==ci) improved=true;
+      }
+    }
+    var byComm={}; for(i=0;i<n;i++){ (byComm[comm[i]]||(byComm[comm[i]]=[])).push(i); }
+    var groups=[];
+    Object.keys(byComm).forEach(function(c){
+      var mem=byComm[c]; if(mem.length<minSize) return;
+      var central=mem[0], bestW=-1;
+      mem.forEach(function(mi){ var w=0;
+        adj[mi].forEach(function(e){ if(comm[e.t]===+c) w+=e.w; });
+        if(w>bestW){ bestW=w; central=mi; } });
+      groups.push({ idxs:mem, members:mem.map(function(mi){return ids[mi];}),
+        central:ids[central], size:mem.length });
+    });
+    groups.sort(function(a,b){ return b.size-a.size; });
+    var idGroup={}; groups.forEach(function(g,gi){ g.rank=gi;
+      g.members.forEach(function(id){ idGroup[id]=gi; }); });
+    return {groups:groups, idGroup:idGroup, comm:comm};
+  }
+
   /* ---------- full dossier: everyone at once ---------- */
   // Mirrors the plugin's buildFullGraph. Each pair is counted once (both people may
   // hold a record of the same call), node size comes from total shared calls, and the
@@ -1128,8 +1199,9 @@
   }
 
   var fullStop=null;
-  function fullNetwork(host, data){
+  function fullNetwork(host, data, groups){
     if(fullStop){ fullStop(); fullStop=null; }
+    var idGroup=(groups&&groups.idGroup)||{};
     var ids=data.ids, links=data.links;
     if(!ids.length){ host.innerHTML='<div class="empty-note">No recorded calls yet.</div>'; return; }
     var W=widthOf(host), H=Math.max(360, host.clientHeight||520);
@@ -1173,7 +1245,10 @@
     function applyView(){ root.setAttribute("transform","translate("+pan.x+","+pan.y+") scale("+z+")"); }
     nodes.forEach(function(nd){
       var name=uname(nd.id), g=el("g",{});
-      nd.dot=el("circle",{r:nd.r,fill:"var(--data-2)",stroke:"var(--surface)","stroke-width":1.5});
+      // colour by detected group; ungrouped people stay neutral grey
+      var grp=idGroup[nd.id];
+      nd.dot=el("circle",{r:nd.r,fill:grp==null?"var(--data-2)":groupColor(grp),
+        stroke:"var(--surface)","stroke-width":1.5});
       g.appendChild(nd.dot);
       nd.hit=el("circle",{r:Math.max(nd.r,9),class:"net-node"});
       nd.hit.addEventListener("mousemove",function(ev){
@@ -1322,9 +1397,26 @@
     if(!cache) return;
     var lim=Math.max(10,Math.min(4000,parseInt($("#full-limit").value,10)||300));
     var data=fullGraphData(cache.dossiers||{},lim);
+    var groups=detectGroups(data,3);
     $("#full-meta").textContent=data.ids.length+" of "+data.total+" people · "+data.links.length
-      +" strongest connections · scroll to zoom, drag a node, drag the background to pan, double-click to reset";
-    fullNetwork($("#full-plot"),data);
+      +" strongest connections · "+groups.groups.length+" groups · scroll to zoom, drag a node, drag the background to pan, double-click to reset";
+    fullNetwork($("#full-plot"),data,groups);
+    renderGroupsPanel(groups);
+  }
+  function renderGroupsPanel(groups){
+    var box=$("#full-groups"); if(!box) return;
+    var gs=groups.groups;
+    if(!gs.length){ box.innerHTML='<h4>Detected groups</h4><div class="empty-note">No clear groups yet — needs more overlapping calls between the same people.</div>'; return; }
+    box.innerHTML='<h4>Detected groups ('+gs.length+')</h4>'+gs.map(function(g){
+      var others=g.members.filter(function(id){return id!==g.central;});
+      var names=others.slice(0,6).map(function(id){return esc(uname(id));}).join(", ");
+      if(others.length>6) names+=" +"+(others.length-6)+" more";
+      return '<div class="grp"><div class="grp-head">'
+        +'<span class="sw" style="background:'+groupColor(g.rank)+'"></span>'
+        +'<span class="grp-name" title="'+esc(uname(g.central))+'">'+esc(uname(g.central))+'</span>'
+        +'<span class="grp-n">'+g.size+' people</span></div>'
+        +(names?'<div class="grp-mem">'+names+'</div>':'')+'</div>';
+    }).join("");
   }
 
   function renderDossier(){
@@ -1388,6 +1480,7 @@
   $("#dossier-select").addEventListener("change",function(e){ dossierTarget=e.target.value; if(cache) renderDossier(); });
   $("#fullDossierBtn").addEventListener("click",openFullDossier);
   $("#full-close").addEventListener("click",closeFullDossier);
+  $("#full-groups-toggle").addEventListener("click",function(){ $("#full-groups").classList.toggle("hidden"); });
   $("#full-limit").addEventListener("change",function(){ if(!$("#full-overlay").classList.contains("hidden")) renderFullDossier(); });
   document.addEventListener("keydown",function(e){
     if(e.key==="Escape" && !$("#full-overlay").classList.contains("hidden")) closeFullDossier();

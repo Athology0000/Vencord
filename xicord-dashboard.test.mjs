@@ -316,5 +316,36 @@ const ratio = large.ms / Math.max(1, small.ms);
 ok(`4x nodes costs ~linear, not quadratic (${small.ms}ms -> ${large.ms}ms, ${ratio.toFixed(1)}x)`,
     ratio < 12, `${ratio.toFixed(1)}x looks quadratic (O(n^2) would be ~16x)`);
 
+/* ---------- auto-grouping: community detection finds friend circles ---------- */
+console.log("\n-- auto-grouping: two cliques bridged by one edge stay two groups --");
+const detectGroups = new Function(`${extract("detectGroups")}; return detectGroups;`)();
+
+// two 4-cliques {0,1,2,3} and {4,5,6,7}, joined only by a single 3-4 bridge
+const clique = (a, b, c, d) => [[a, b], [a, c], [a, d], [b, c], [b, d], [c, d]].map(([x, y]) => ({ a: x, b: y, w: 5 }));
+const ids8 = ["A", "B", "C", "D", "E", "F", "G", "H"];
+const links8 = [...clique(0, 1, 2, 3), ...clique(4, 5, 6, 7), { a: 3, b: 4, w: 1 }];
+const gr8 = detectGroups({ ids: ids8, links: links8 }, 3);
+ok("finds exactly two groups", gr8.groups.length === 2, `got ${gr8.groups.length}`);
+ok("each group has 4 people", gr8.groups.every(g => g.size === 4), JSON.stringify(gr8.groups.map(g => g.size)));
+const groupOf = id => gr8.idGroup[id];
+ok("first clique lands in one group", new Set(["A", "B", "C", "D"].map(groupOf)).size === 1);
+ok("second clique lands in another", new Set(["E", "F", "G", "H"].map(groupOf)).size === 1);
+ok("the bridge does NOT merge them", groupOf("A") !== groupOf("E"), "a single shared edge fused two groups");
+ok("every member is colour-ranked", gr8.groups.every(g => typeof g.rank === "number"));
+ok("central person is inside their own clique",
+    gr8.groups.every(g => g.members.includes(g.central)));
+
+// a lone pair is below the min group size and should not be reported
+const grPair = detectGroups({ ids: ["x", "y", "z"], links: [{ a: 0, b: 1, w: 3 }] }, 3);
+ok("a dyad is not a 'group' (min size 3)", grPair.groups.length === 0, `got ${grPair.groups.length}`);
+ok("no edges -> no groups, no throw", detectGroups({ ids: ["p", "q"], links: [] }, 3).groups.length === 0);
+
+// on the real sample cache, grouping runs and every grouped id is real
+const realData = fullApi.fullGraphData(cache.dossiers || {}, 300);
+const realGroups = detectGroups(realData, 3);
+ok("real cache: grouping runs without throwing", Array.isArray(realGroups.groups));
+ok("real cache: every grouped id is a node in the graph",
+    Object.keys(realGroups.idGroup).every(id => realData.ids.includes(id)));
+
 console.log(`\n${pass} passed, ${fail} failed\n`);
 process.exit(fail ? 1 : 0);
