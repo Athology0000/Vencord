@@ -202,7 +202,26 @@ background fill. `MEMBER_SWEEP_CAP` (5000) is just a pathological-guild guard.
 Limit unchanged from before: `getMemberIds` only returns members Discord has
 actually loaded into the client, not the full roster of a large guild.
 
+## Open-on-demand, game tracking, searchable picker (2026-08-06)
+- **Instant pull-up.** Opening a dossier used to show only what past voice-state
+  updates had accumulated, so a just-clicked person often showed nothing. The
+  modal now `reconcile()`s the viewed person immediately on open (and every 4s
+  while open), so if they're in a public/locked call their companions appear at
+  once. `initial` is honoured as the target directly rather than falling back to
+  `watched[0]`.
+- **Game time.** Dossier now subscribes `PRESENCE_UPDATES` and, for tracked
+  people, tracks per-game play time the same way it tracks voice overlaps: an
+  `openGame` session per person, banked into `profile.games[name] = {ms, last,
+  sessions}` on stop/switch, merged live in `viewProfile`, capped at `MAX_GAMES`,
+  closed on stop(), and exported in the cache. Shown as "Games played" in the
+  modal and a bar chart in the dashboard's dossier section.
+- **Searchable picker.** The one-person view's chip list (a wall of chips for a
+  large dossier) is replaced by a search box; the list only renders once you type,
+  filtering by name or id. The person you're viewing still shows regardless.
+
 ## Known limits
+- Game/presence time is only visible for people whose presence Discord sends your
+  client (shared servers / friends), and accrues only while the plugin runs.
 - Watchers only fire for what Discord tells your client (shared servers, visible
   channels, cached presence).
 - Dossier co-presence is observational and public-VC only; it grows only while
