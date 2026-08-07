@@ -43,17 +43,69 @@ let owners = new Map();
 // token -> { user, username, at }
 let issued = {};
 
-// Several Discord accounts can be one person. XICORD_ALIASES maps the extra ids onto a
-// canonical one — "from=to,from=to" — so every account writes into the same blob instead
-// of each getting its own half-empty one.
+// Several Discord accounts can be one person. XICORD_ALIASES maps account ids onto the
+// blob they belong to — "from=to,from=to".
+//
+// The right-hand side is a BLOB NAME, not another account. Pointing one account at
+// another made whichever account happened to be named the owner, and the other one a
+// second-class attachment to somebody else's storage — so the identity of the data
+// depended on which account you happened to set up first. A blob named `lab-a` is its own
+// thing: accounts attach to it, none of them owns it, and an account can be swapped out
+// without the store changing hands.
+//
+// A bare snowflake on the right is still accepted, so the older account=account form
+// keeps working.
+const BLOB_NAME = /^[a-z0-9][a-z0-9_-]{0,31}$/i;
+const ACCOUNT_ID = /^\d{5,25}$/;
+
 function aliasMap() {
     const out = new Map();
     for (const pair of (process.env.XICORD_ALIASES || "").split(",")) {
         const [from, to] = pair.split("=").map(x => (x || "").trim());
-        if (/^\d{5,25}$/.test(from) && /^\d{5,25}$/.test(to)) out.set(from, to);
+        // A blob name is allowed on the LEFT too, which is how a blob gets renamed:
+        // `lab-a=4has` points the old name at the new one, and the boot-time adoption
+        // folds the old files in and removes them. Without it a rename would strand the
+        // old blob under a name nothing resolves to any more.
+        if (!ACCOUNT_ID.test(from) && !BLOB_NAME.test(from)) continue;
+        if (!BLOB_NAME.test(to) && !ACCOUNT_ID.test(to)) continue;
+        if (from === to) continue;   // a self-alias is a no-op, and canonical() would loop on it
+        out.set(from, to);
     }
     return out;
 }
+
+/**
+ * Whether a resolved owner is safe to use as a FILENAME.
+ *
+ * Until now every owner was a snowflake, so `path.join(USERS_DIR, id + ".json")` could not
+ * escape the directory. Blob names are operator-supplied, and `../../something` in an env
+ * var would write wherever it liked — so the pattern is checked here rather than trusted,
+ * and anything that fails is refused rather than sanitised into a surprising path.
+ */
+function storageKey(owner) {
+    if (typeof owner !== "string") return null;
+    if (ACCOUNT_ID.test(owner) || BLOB_NAME.test(owner)) return owner;
+    return null;
+}
+/**
+ * The Discord accounts attached to a blob.
+ *
+ * The binding only existed in an env var, so "is the third account actually wired to the
+ * right blob?" could only be answered by reading the deployment's configuration. Reporting
+ * it back on /v1/me makes a mis-typed id visible from the client that is affected by it.
+ * Only real account ids are listed — a rename entry like `lab-a=4has` is plumbing, not a
+ * member.
+ */
+function accountsOn(blob) {
+    const out = [];
+    for (const [from] of aliasMap()) {
+        if (ACCOUNT_ID.test(from) && canonical(from) === blob) out.push(from);
+    }
+    // an account with no alias entry IS its own blob, and belongs to itself
+    if (ACCOUNT_ID.test(blob) && !out.includes(blob)) out.push(blob);
+    return out.sort();
+}
+
 /** Resolve an id through the alias map, guarding against a chain that loops. */
 function canonical(id) {
     if (!id) return id;
@@ -141,8 +193,19 @@ async function writeJson(file, data) {
     await fsp.writeFile(tmp, JSON.stringify(data), "utf8");
     await fsp.rename(tmp, file);
 }
-const poolFile = id => path.join(POOL_DIR, `${id}.json`);
-const userFile = id => path.join(USERS_DIR, `${id}.json`);
+// Both throw rather than returning a path built from an unvalidated key: a blob name
+// comes from an env var, and quietly writing to a path outside the data directory is the
+// one failure here that would not look like a failure.
+const poolFile = id => {
+    const key = storageKey(id);
+    if (!key) throw new Error(`unsafe storage key: ${JSON.stringify(id)}`);
+    return path.join(POOL_DIR, `${key}.json`);
+};
+const userFile = id => {
+    const key = storageKey(id);
+    if (!key) throw new Error(`unsafe storage key: ${JSON.stringify(id)}`);
+    return path.join(USERS_DIR, `${key}.json`);
+};
 
 /**
  * Every contributor.s private blob. Only the friend graph is ever taken from these —
@@ -356,6 +419,11 @@ const server = http.createServer(async (req, res) => {
         const mine = await readJson(userFile(owner), { friends: {}, watching: [], notes: {} });
         return send(res, 200, {
             ...mine, user: owner,
+            // `blob` and `accounts` say what this store IS and who writes to it. `user` is
+            // kept as-is so existing clients keep working; it now names the blob rather
+            // than a Discord account, which is the whole point of the change.
+            blob: owner,
+            accounts: accountsOn(owner),
             counts: {
                 friends: Object.keys(mine.friends || {}).length,
                 watching: (mine.watching || []).length,
@@ -430,12 +498,60 @@ const server = http.createServer(async (req, res) => {
     return send(res, 404, { error: "not found" });
 });
 
+/**
+ * Fold a blob left behind by an aliasing change into the blob its account now points at,
+ * then remove the original.
+ *
+ * Re-pointing an account at a named blob orphans whatever it had already stored: nothing
+ * reads `users/<accountId>.json` once the account resolves to `lab-a`. The pooled friend
+ * graph still counts it, because that reads every file on disk — so the data is not lost,
+ * but the same facts arrive from two slices and the account's own view looks empty until
+ * it next pushes.
+ *
+ * Adopting is strictly better than waiting for that push: the canonical blob is correct
+ * immediately, and there is no window where a client could be told it has nothing.
+ *
+ * ORDER MATTERS. The merged blob is written and read back before the original is removed,
+ * so a crash or a full disk leaves the source intact and the adoption simply runs again
+ * next boot. Nothing is deleted on the strength of a write we did not confirm.
+ */
+async function adoptOrphanedBlobs() {
+    const map = aliasMap();
+    for (const [from, to] of map) {
+        if (from === to) continue;
+        const target = canonical(from);
+        if (target === from) continue;
+        for (const [dir, read, merge, empty] of [
+            [USERS_DIR, userFile, mergePrivate, { friends: {}, watching: [], notes: {} }],
+            [POOL_DIR, poolFile, mergePool, { people: {}, calls: {}, users: {} }],
+        ]) {
+            const src = path.join(dir, `${from}.json`);
+            try { await fsp.access(src); } catch { continue; }   // nothing to adopt
+            try {
+                const orphan = await readJson(src, null);
+                if (!orphan) { console.warn(`adopt: ${src} unreadable, leaving it alone`); continue; }
+                const dst = read(target);
+                const merged = merge(await readJson(dst, empty), orphan);
+                await writeJson(dst, merged);
+                // read back before deleting: the point of the whole ordering
+                const check = await readJson(dst, null);
+                if (!check) { console.error(`adopt: ${dst} did not read back, keeping ${src}`); continue; }
+                await fsp.unlink(src);
+                console.log(`adopt: folded ${from} into ${target} (${path.basename(dir)}) and removed the orphan`);
+            } catch (e) {
+                console.error(`adopt: ${from} -> ${target} failed, original kept:`, e.message);
+            }
+        }
+    }
+}
+
 if (require.main === module) {
     loadTokens();
     if (!tokens.size) console.warn("XICORD_TOKENS is empty — every push and pull will be rejected");
     ensureDirs()
+        .then(adoptOrphanedBlobs)
         .then(() => server.listen(PORT, () => console.log(`xicord-sync ${VERSION} listening on ${PORT}, data in ${DATA_DIR}`)))
         .catch(e => { console.error("could not prepare", DATA_DIR, e); process.exit(1); });
 }
 
-module.exports = { server, loadTokens, deviceFor, readSlice, writeSlice, readAllSlices, ensureDirs };
+module.exports = { server, loadTokens, deviceFor, readSlice, writeSlice, readAllSlices, ensureDirs, adoptOrphanedBlobs };
