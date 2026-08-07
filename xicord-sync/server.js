@@ -18,12 +18,15 @@ const path = require("path");
 const crypto = require("crypto");
 const { mergeAll, mergeSnapshot, sanitize } = require("./merge");
 const { mergeAllPools, mergePool, sanitizePool, sanitizePrivate, mergePrivate } = require("./pool");
+const auth = require("./auth");
+const pages = require("./pages");
 
 const PORT = Number(process.env.PORT) || 8080;
 const DATA_DIR = process.env.DATA_DIR || "/data";
 const DEVICES_DIR = path.join(DATA_DIR, "devices");   // v1, kept until every device migrates
 const POOL_DIR = path.join(DATA_DIR, "pool");         // shared observations, one slice per contributor
 const USERS_DIR = path.join(DATA_DIR, "users");       // private blobs, never merged across users
+const AUTH_FILE = path.join(DATA_DIR, "auth", "tokens.json");  // tokens issued by sign-in
 // A full re-sync is ~6MB today; leave room to grow. Overridable so the tests can drive
 // the oversize path at a size that doesn't take a second to transfer.
 const MAX_BODY = Number(process.env.MAX_BODY_BYTES) || 32 * 1024 * 1024;
@@ -36,6 +39,38 @@ let tokens = new Map();
 // token -> the Discord user id that owns it. Derived here, never read from a request,
 // so no client can address another user's blob.
 let owners = new Map();
+// Tokens issued by signing in, persisted so they survive a redeploy.
+// token -> { user, username, at }
+let issued = {};
+
+// Several Discord accounts can be one person. XICORD_ALIASES maps the extra ids onto a
+// canonical one — "from=to,from=to" — so every account writes into the same blob instead
+// of each getting its own half-empty one.
+function aliasMap() {
+    const out = new Map();
+    for (const pair of (process.env.XICORD_ALIASES || "").split(",")) {
+        const [from, to] = pair.split("=").map(x => (x || "").trim());
+        if (/^\d{5,25}$/.test(from) && /^\d{5,25}$/.test(to)) out.set(from, to);
+    }
+    return out;
+}
+/** Resolve an id through the alias map, guarding against a chain that loops. */
+function canonical(id) {
+    if (!id) return id;
+    const map = aliasMap();
+    let cur = id;
+    for (let i = 0; i < 5 && map.has(cur); i++) cur = map.get(cur);
+    return cur;
+}
+
+/** Env tokens first (bootstrap/admin), then anything sign-in has handed out. */
+function ownerFor(token) {
+    if (!token) return null;
+    const fromEnv = owners.get(token);
+    if (fromEnv !== undefined && fromEnv !== null) return canonical(fromEnv);
+    const rec = issued[token];
+    return rec ? canonical(rec.user) : null;
+}
 
 function loadTokens() {
     const raw = process.env.XICORD_TOKENS || "";
@@ -69,6 +104,8 @@ function loadTokens() {
 /** Constant-time lookup: comparing tokens with === leaks length and prefix by timing. */
 function deviceFor(token) {
     if (!token) return null;
+    const rec = issued[token];
+    if (rec) return `u${rec.user}-${crypto.createHash("sha256").update(token).digest("hex").slice(0, 8)}`;
     const given = Buffer.from(token);
     let found = null;
     for (const [known, deviceId] of tokens) {
@@ -87,6 +124,8 @@ async function ensureDirs() {
     await fsp.mkdir(DEVICES_DIR, { recursive: true });
     await fsp.mkdir(POOL_DIR, { recursive: true });
     await fsp.mkdir(USERS_DIR, { recursive: true });
+    await fsp.mkdir(path.dirname(AUTH_FILE), { recursive: true });
+    issued = await readJson(AUTH_FILE, {});
 }
 
 /** Read a JSON file, or `fallback` if it is missing or unreadable. */
@@ -164,6 +203,12 @@ function send(res, code, obj) {
     res.end(body);
 }
 
+const esc = t => String(t).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+function sendHtml(res, code, doc) {
+    res.writeHead(code, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" });
+    res.end(doc);
+}
+
 function bearer(req) {
     const h = req.headers.authorization || "";
     return h.startsWith("Bearer ") ? h.slice(7).trim() : "";
@@ -198,15 +243,51 @@ function readBody(req) {
 const server = http.createServer(async (req, res) => {
     const url = (req.url || "/").split("?")[0];
 
-    if (url === "/v1/health" || url === "/") {
+    if (url === "/v1/health") {
         const slices = await readAllSlices().catch(() => []);
         return send(res, 200, { ok: true, service: "xicord-sync", version: VERSION, devices: slices.length });
+    }
+    if (url === "/" || url === "/login") {
+        const pool = mergeAllPools(await readAllPools().catch(() => []));
+        let devices = 0;
+        try { devices = (await fsp.readdir(POOL_DIR)).filter(f => f.endsWith(".json")).length; } catch { }
+        return sendHtml(res, 200, pages.loginPage({
+            configured: auth.configured(),
+            devices,
+            people: Object.keys(pool.people).length
+        }));
+    }
+
+    /* ---- sign-in ---- */
+    if (url === "/auth/login") {
+        if (!auth.configured()) {
+            return sendHtml(res, 503, pages.errorPage("Not configured", "DISCORD_CLIENT_ID and DISCORD_CLIENT_SECRET must be set on the service."));
+        }
+        res.writeHead(302, { Location: auth.authorizeUrl(), "Cache-Control": "no-store" });
+        return res.end();
+    }
+    if (url === "/auth/callback") {
+        const qs = new URLSearchParams((req.url || "").split("?")[1] || "");
+        if (!auth.configured()) return sendHtml(res, 503, pages.errorPage("Not configured", "The service is missing its Discord credentials."));
+        if (qs.get("error")) return sendHtml(res, 400, pages.errorPage("Sign-in cancelled", qs.get("error_description") || qs.get("error")));
+        // Single-use state: without it, someone could hand you a callback URL of their
+        // choosing and bind YOUR plugin to THEIR account.
+        if (!auth.takeState(qs.get("state"))) return sendHtml(res, 400, pages.errorPage("That sign-in expired", "Sign-in links are single-use and last ten minutes. Start again."));
+        let who;
+        try { who = await auth.exchange(qs.get("code") || ""); }
+        catch (e) { console.error("oauth:", e.message); return sendHtml(res, 502, pages.errorPage("Discord refused the sign-in", "Check the client secret and that the redirect URI matches exactly.")); }
+
+        const tokenNew = auth.mintToken();
+        issued[tokenNew] = { user: who.id, username: who.username, at: Date.now() };
+        await writeJson(AUTH_FILE, issued);
+        console.log(`issued a device token to ${who.username || "?"} (${who.id})`);
+        return sendHtml(res, 200, pages.tokenPage({ username: who.username, userId: who.id, token: tokenNew }));
     }
 
     const token = bearer(req);
     const device = deviceFor(token);
     if (!device) return send(res, 401, { error: "unauthorized" });   // no detail, ever
-    const owner = owners.get(token) || null;   // the Discord id this token belongs to
+    const owner = ownerFor(token);   // the Discord id this token belongs to
 
     /* ---- v2: the shared pool ---- */
     if (url === "/v1/pool" && req.method === "GET") {
