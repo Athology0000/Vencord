@@ -190,6 +190,16 @@
   #full-groups .grp:hover{background:var(--data-soft)}
   #full-groups .grp.on{background:var(--data-soft);box-shadow:inset 2px 0 0 var(--data)}
   #full-groups .hint-row{opacity:.5;font-size:11px;margin-top:8px;padding-top:8px;border-top:1px solid var(--line)}
+  #full-search-results{position:absolute;top:52px;left:16px;width:250px;max-height:320px;overflow:auto;
+    background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:5px;
+    box-shadow:0 8px 30px rgba(0,0,0,.5);z-index:2;font-size:13px}
+  #full-search-results.hidden{display:none}
+  #full-search-results .res{display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:7px;cursor:pointer}
+  #full-search-results .res:hover,#full-search-results .res.on{background:var(--data-soft)}
+  #full-search-results .res-name{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  #full-search-results .res-tag{font-size:10px;text-transform:uppercase;letter-spacing:.04em;opacity:.6;flex:none}
+  #full-search-results .res-tag.has{opacity:.9;color:var(--data)}
+  #full-search-results .empty-note{padding:8px;opacity:.6}
   #full-groups .grp-head{display:flex;align-items:center;gap:8px}
   #full-groups .sw{width:11px;height:11px;border-radius:50%;flex:none;box-shadow:0 0 0 1px var(--surface)}
   #full-groups .grp-name{font-weight:600;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -317,6 +327,7 @@
       </div>
       <div id="full-plot"></div>
       <div id="full-groups"></div>
+      <div id="full-search-results" class="hidden"></div>
     </div>
 
     <p class="eyebrow" style="margin-top:26px">Sessions</p>
@@ -1204,10 +1215,10 @@
     return {ids:ids,links:links,strength:strength,msTotal:msTotal,total:Object.keys(strength).length};
   }
 
-  var fullStop=null, fullIsolate=null, fullHighlight=null;
+  var fullStop=null, fullIsolate=null, fullHighlight=null, fullFocus=null;
   function fullNetwork(host, data, groups){
     if(fullStop){ fullStop(); fullStop=null; }
-    fullIsolate=null; fullHighlight=null;
+    fullIsolate=null; fullHighlight=null; fullFocus=null;
     var idGroup=(groups&&groups.idGroup)||{};
     var ids=data.ids, links=data.links;
     if(!ids.length){ host.innerHTML='<div class="empty-note">No recorded calls yet.</div>'; return; }
@@ -1400,7 +1411,18 @@
       z=Math.max(0.3,Math.min(3,Math.min((W-2*pad)/bw,(H-2*pad)/bh)));
       pan.x=W/2-(minX+maxX)/2*z; pan.y=H/2-(minY+maxY)/2*z; applyView();
     }
-    fullIsolate=applyIsolation; fullHighlight=setQuery;
+    // Zoom to and ring a single person (used when a search result has no standalone
+    // dossier to open — we point them out in the graph instead). Returns whether found.
+    function focusNode(id){
+      var nd=null; for(var i=0;i<nodes.length;i++){ if(nodes[i].id===id){ nd=nodes[i]; break; } }
+      if(!nd) return false;
+      nodes.forEach(function(x){ var hot=x===nd;
+        x.dot.setAttribute("stroke", hot?"var(--data)":"var(--surface)");
+        x.dot.setAttribute("stroke-width", hot?3.5:1.5); });
+      z=2; pan.x=W/2-nd.x*z; pan.y=H/2-nd.y*z; applyView();
+      return true;
+    }
+    fullIsolate=applyIsolation; fullHighlight=setQuery; fullFocus=focusNode;
 
     // A few collision-only passes so the first painted frame is already untangled.
     // Grid-binned like the live step: the old all-pairs version ran tens of millions of
@@ -1441,10 +1463,12 @@
       history.replaceState(null,"",location.pathname+location.search);
     }
   }
+  var lastFullData=null;
   function renderFullDossier(){
     if(!cache) return;
     var lim=Math.max(10,Math.min(4000,parseInt($("#full-limit").value,10)||300));
     var data=fullGraphData(cache.dossiers||{},lim);
+    lastFullData=data;
     var groups=detectGroups(data,3);
     $("#full-meta").textContent=data.ids.length+" of "+data.total+" people · "+data.links.length
       +" strongest connections · "+groups.groups.length+" groups · scroll to zoom, drag a node, drag the background to pan, double-click to reset";
@@ -1452,12 +1476,53 @@
     renderGroupsPanel(groups);
     runFullSearch();   // re-apply any live search text to the freshly built graph
   }
-  // Highlight people matching the search box; updates the "N found" hint.
+  // Highlight people matching the search box, update the "N found" hint, and list the
+  // matches as clickable results.
   function runFullSearch(){
     if(typeof fullHighlight!=="function") return;
     var q=$("#full-search").value||"";
     var n=fullHighlight(q);
     $("#full-search-meta").textContent = q.trim()==="" ? "" : (n+" found");
+    var ids=(lastFullData&&lastFullData.ids)||[];
+    renderSearchResults(searchPeople(ids,q,uname,hasDossier,20),q);
+  }
+  function hasDossier(id){ var d=(cache&&cache.dossiers||{})[id];
+    return !!(d&&d.companions&&Object.keys(d.companions).length); }
+  // Pure: matching people, dossier-subjects first (they can be opened), then by name.
+  function searchPeople(ids,query,unameOf,hasDossierOf,max){
+    var q=(query||"").toLowerCase().trim(); if(!q) return [];
+    var res=[];
+    for(var i=0;i<ids.length;i++){ var id=ids[i], name=unameOf(id);
+      if(name.toLowerCase().indexOf(q)<0) continue;
+      res.push({id:id,name:name,hasDossier:!!hasDossierOf(id)}); }
+    res.sort(function(a,b){ if(a.hasDossier!==b.hasDossier) return a.hasDossier?-1:1;
+      var an=a.name.toLowerCase(), bn=b.name.toLowerCase(); return an<bn?-1:(an>bn?1:0); });
+    return max?res.slice(0,max):res;
+  }
+  function renderSearchResults(results,q){
+    var box=$("#full-search-results");
+    if(!q.trim()){ box.classList.add("hidden"); box.innerHTML=""; return; }
+    box.classList.remove("hidden");
+    if(!results.length){ box.innerHTML='<div class="empty-note">No matching people.</div>'; return; }
+    box.innerHTML=results.map(function(r){
+      return '<div class="res" data-id="'+esc(r.id)+'" role="button" tabindex="0" title="'
+        +(r.hasDossier?"Open this person\'s dossier":"Focus in the graph (no standalone dossier)")+'">'
+        +'<span class="res-name">'+esc(r.name)+'</span>'
+        +'<span class="res-tag'+(r.hasDossier?" has":"")+'">'+(r.hasDossier?"dossier":"in graph")+'</span></div>';
+    }).join("");
+  }
+  // Open a searched person: their own dossier if they are a tracked subject, otherwise
+  // just point them out in the full graph.
+  function openDossierFor(id){
+    if(hasDossier(id)){
+      dossierTarget=id;
+      closeFullDossier();
+      renderDossier();
+      var sec=$("#dossier-section");
+      if(sec&&sec.scrollIntoView) sec.scrollIntoView({behavior:"smooth",block:"start"});
+    } else if(typeof fullFocus==="function" && fullFocus(id)){
+      $("#full-search-meta").textContent="no standalone dossier for "+uname(id)+" — focused in graph";
+    }
   }
   function renderGroupsPanel(groups){
     var box=$("#full-groups"); if(!box) return;
@@ -1548,6 +1613,18 @@
   $("#full-groups-toggle").addEventListener("click",function(){ $("#full-groups").classList.toggle("hidden"); });
   $("#full-search").addEventListener("input",function(){ runFullSearch(); });
   $("#full-search").addEventListener("search",function(){ runFullSearch(); }); // the clear (×) button
+  $("#full-search").addEventListener("keydown",function(ev){
+    if(ev.key!=="Enter") return;
+    var first=$("#full-search-results").querySelector(".res");
+    if(first){ ev.preventDefault(); openDossierFor(first.getAttribute("data-id")); }
+  });
+  $("#full-search-results").addEventListener("click",function(ev){
+    var r=ev.target.closest(".res"); if(r) openDossierFor(r.getAttribute("data-id"));
+  });
+  $("#full-search-results").addEventListener("keydown",function(ev){
+    if(ev.key!=="Enter" && ev.key!==" ") return;
+    var r=ev.target.closest(".res"); if(r){ ev.preventDefault(); openDossierFor(r.getAttribute("data-id")); }
+  });
   $("#full-groups").addEventListener("click",function(ev){ var r=ev.target.closest(".grp"); if(r) onGroupClick(r); });
   $("#full-groups").addEventListener("keydown",function(ev){
     if(ev.key!=="Enter" && ev.key!==" ") return;

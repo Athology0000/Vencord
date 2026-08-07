@@ -270,12 +270,12 @@ const fullNetSrc = extract("fullNetwork");
 const fullApi = new Function(
     "cache", "el", "svgRoot", "widthOf", "uname", "esc", "fmtDur", "showTip", "hideTip",
     "requestAnimationFrame", "cancelAnimationFrame",
-    `var fullStop=null; var fullIsolate=null; var fullHighlight=null; var FULL_LINKS_PER_NODE=6;
+    `var fullStop=null; var fullIsolate=null; var fullHighlight=null; var fullFocus=null; var FULL_LINKS_PER_NODE=6;
      function groupColor(r){return "#888";}
      ${fullSrc}; ${fullNetSrc};
      return {fullGraphData:fullGraphData, fullNetwork:fullNetwork,
        getStop:function(){return fullStop;}, getIsolate:function(){return fullIsolate;},
-       getHighlight:function(){return fullHighlight;}};`
+       getHighlight:function(){return fullHighlight;}, getFocus:function(){return fullFocus;}};`
 )(cache, el, svgRoot, widthOf, uname, esc, fmtDur, showTip, hideTip, requestAnimationFrame, cancelAnimationFrame);
 
 // a sparse "everyone" dataset: each person linked to a handful of others
@@ -419,6 +419,34 @@ ok("isolation still hides non-group members even when they match the search",
     ids8.every((_, i) => inG0b[i] ? opOf(i) === 1 : opOf(i) === 0.08),
     ids8.map((_, i) => opOf(i)).join(","));
 const shStop = fullApi.getStop(); if (shStop) shStop();
+
+console.log("\n-- search results list: subjects first, then by name --");
+const searchPeople = new Function(`${extract("searchPeople")}; return searchPeople;`)();
+const nameMap = { u1: "Alice", u2: "alan", u3: "Bob", u4: "alba", u5: "Carol" };
+const unameOf = id => nameMap[id] || id;
+const hasDoss = id => id === "u2" || id === "u4"; // only these are tracked subjects
+const sr = searchPeople(Object.keys(nameMap), "al", unameOf, hasDoss, 20);
+ok("matches are case-insensitive substring", sr.map(r => r.id).sort().join(",") === "u1,u2,u4", JSON.stringify(sr.map(r => r.name)));
+ok("dossier-subjects are listed first", sr[0].hasDossier && sr[1].hasDossier && !sr[2].hasDossier, JSON.stringify(sr.map(r => [r.name, r.hasDossier])));
+ok("subjects are ordered by name (alan before alba)", sr[0].name === "alan" && sr[1].name === "alba");
+ok("each result carries id, name, hasDossier", sr.every(r => r.id && r.name && typeof r.hasDossier === "boolean"));
+ok("empty query -> no results", searchPeople(Object.keys(nameMap), "  ", unameOf, hasDoss).length === 0);
+ok("the max cap is honoured", searchPeople(["u1", "u2", "u3", "u4", "u5"], "a", () => "aaa", () => false, 2).length === 2);
+ok("no matches -> empty list, no throw", searchPeople(Object.keys(nameMap), "zzz", unameOf, hasDoss).length === 0);
+
+console.log("\n-- clicking a graph-only person focuses them in the graph --");
+const fcHost = new FakeEl("div");
+fullApi.fullNetwork(fcHost, { ids: ids8, links: links8, strength: strength8, msTotal: msTotal8 }, gr8);
+const focus = fullApi.getFocus();
+ok("fullNetwork exposes a focus hook", typeof focus === "function");
+const fcSvg = fcHost.children[0];
+const fcHits = fcSvg.all(e => e.classList.contains("net-node"));
+const fcDot = i => fcHits[i].parent.children.find(c => c.tag === "circle" && !c.classList.contains("net-node"));
+ok("focusing a known person returns true", focus("C") === true);
+ok("the focused person gets the strongest ring", fcDot(ids8.indexOf("C")).getAttribute("stroke-width") === "3.5");
+ok("everyone else keeps the normal ring", ids8.filter(x => x !== "C").every(x => fcDot(ids8.indexOf(x)).getAttribute("stroke-width") === "1.5"));
+ok("focusing an unknown id returns false", focus("nobody") === false);
+const fcStop = fullApi.getStop(); if (fcStop) fcStop();
 
 console.log(`\n${pass} passed, ${fail} failed\n`);
 process.exit(fail ? 1 : 0);
