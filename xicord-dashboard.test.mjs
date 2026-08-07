@@ -789,5 +789,51 @@ ok("the overlap length is the intersection, not either session",
 ok("two people who never shared a channel have no timeline",
     S.pairTimeline(pix.byUser, "a", "nobody").count === 0);
 
+
+console.log("\n-- identity history --");
+const IDN = new Function(`${extract("identityChanges")}${extract("sharedGames")}
+    return { identityChanges, sharedGames };`)();
+const hist = {
+    u1: [{ username: "oldname", avatar: "a1", from: 1, until: 5000 }],
+    u2: [{ username: "first", from: 1, until: 100 }, { username: "second", from: 100, until: 9000 }],
+    u3: [],
+};
+let ic = IDN.identityChanges(hist, { u1: { username: "newname" }, u2: { username: "third" } });
+ok("most recently changed first", ic.map(r => r.id).join(",") === "u2,u1", ic.map(r => r.id).join(","));
+ok("the current name is shown", ic[0].now === "third" && ic[1].now === "newname");
+ok("every past name is kept, newest first", ic[0].was.join(",") === "second,first", ic[0].was.join(","));
+ok("someone with an empty history is not listed", !ic.some(r => r.id === "u3"));
+ok("an unknown current name falls back to the id",
+    IDN.identityChanges({ zz: [{ username: "was", until: 1 }] }, {})[0].now === "zz");
+ok("a duplicate old name is only listed once",
+    IDN.identityChanges({ x: [{ username: "same", until: 1 }, { username: "same", until: 2 }] }, {})[0].was.join(",") === "same");
+ok("junk entries do not throw",
+    IDN.identityChanges({ a: null, b: "nope", c: [{ username: "ok", until: 3 }] }, {}).length === 1);
+ok("an absent store is an empty list", IDN.identityChanges(undefined, {}).length === 0);
+ok("the limit is honoured", IDN.identityChanges(
+    Object.fromEntries(Array.from({ length: 40 }, (_, i) => ["u" + i, [{ username: "n", until: i }]])), {}, 5).length === 5);
+
+console.log("\n-- shared games affinity --");
+const doss = {
+    a: { games: { Deadlock: { ms: 100 }, Valorant: { ms: 900 }, Solo: { ms: 500 } } },
+    b: { games: { Deadlock: { ms: 300 }, Valorant: { ms: 50 }, Other: { ms: 50 } } },
+    c: { games: {} },
+};
+let sg = IDN.sharedGames(doss, "a", "b");
+ok("only games both play are listed", sg.games.map(g => g.name).sort().join(",") === "Deadlock,Valorant");
+ok("ordered by the time the WEAKER side put in", sg.games[0].name === "Deadlock", JSON.stringify(sg.games.map(g => g.name)));
+ok("both sides' hours are reported", sg.games[0].aMs === 100 && sg.games[0].bMs === 300,
+    JSON.stringify(sg.games[0]));
+ok("a bigger combined total does not beat a bigger weaker side",
+    sg.games[1].name === "Valorant", JSON.stringify(sg.games.map(g => g.name)));
+ok("affinity is capped by the weaker library", sg.affinity <= 1 && sg.affinity > 0, String(sg.affinity));
+ok("no shared games means no affinity", IDN.sharedGames(doss, "a", "c").count === 0);
+ok("a missing person is not a crash", IDN.sharedGames(doss, "a", "ghost").count === 0);
+ok("a missing dossier store is not a crash", IDN.sharedGames(undefined, "a", "b").count === 0);
+ok("someone compared with themselves shares everything", (() => {
+    const s = IDN.sharedGames(doss, "a", "a");
+    return s.count === 3 && Math.abs(s.affinity - 1) < 1e-9;
+})());
+
 console.log(`\n${pass} passed, ${fail} failed\n`);
 process.exit(fail ? 1 : 0);

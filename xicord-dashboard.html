@@ -338,6 +338,9 @@
         <div class="card"><h3>Server yield</h3>
           <p class="hint">Findings per member swept. Ranked by the lower bound of the confidence interval, so a 4-member server can't outrank the one eating your lookups.</p>
           <div id="sig-yield" class="conn-list"></div></div>
+        <div class="card"><h3>Changed identity</h3>
+          <p class="hint">Renames, new avatars and new banners, newest first. The old value is kept — a name change is usually meant to leave the old one behind.</p>
+          <div id="sig-ident" class="conn-list"></div></div>
         <div class="card"><h3>Possible alternate accounts</h3>
           <p class="hint">Never once in a call together, yet sharing people and rooms. Circumstantial — the evidence is shown so you can judge it, not a verdict.</p>
           <div id="sig-alts" class="conn-list"></div></div>
@@ -525,6 +528,7 @@ var ptA=null, ptB=null;   // the two people the pair timeline is comparing
     d.presence=Array.isArray(d.presence)?d.presence:[];
     d.dossiers=(d.dossiers&&typeof d.dossiers==="object")?d.dossiers:{};
     d.friendMap=(d.friendMap&&typeof d.friendMap==="object")?d.friendMap:{};
+    d.identityHistory=(d.identityHistory&&typeof d.identityHistory==="object")?d.identityHistory:{};
     return d;
   }
 
@@ -1995,6 +1999,53 @@ var ptA=null, ptB=null;   // the two people the pair timeline is comparing
       .slice(0,limit);
   }
 
+  /**
+   * People who have changed username, avatar or banner, most recently changed first.
+   * The plugin's name cache always noticed the change — it just overwrote the old value.
+   * Keeping it is the point: a rename is usually done to shed the history attached to
+   * the old name, and this is the only place that history outlives it.
+   */
+  function identityChanges(store,current,limit){
+    var out=[];
+    for(var id in (store||{})){
+      var list=store[id];
+      if(!Array.isArray(list)||!list.length) continue;
+      var names=[],looks=0;
+      for(var i=list.length-1;i>=0;i--){
+        var e=list[i]||{};
+        if(e.username && names.indexOf(e.username)<0) names.push(e.username);
+        if(e.avatar||e.banner) looks++;
+      }
+      var cur=(current||{})[id]||{};
+      out.push({id:id, now:cur.username||id, was:names, looks:looks,
+        changedAt:(list[list.length-1]||{}).until||0, changes:list.length});
+    }
+    return out.sort(function(a,b){return b.changedAt-a.changedAt;}).slice(0,limit||30);
+  }
+
+  /**
+   * How much two people's game libraries overlap, weighted by time played. Two people who
+   * both put a hundred hours into the same game share more than two who both launched it
+   * once, so a plain set intersection would flatten the only part that means anything.
+   */
+  function sharedGames(dossiers,a,b){
+    var A=((dossiers||{})[a]||{}).games||{}, B=((dossiers||{})[b]||{}).games||{};
+    var shared=[],aTotal=0,bTotal=0,n;
+    for(n in A) aTotal+=(A[n]||{}).ms||0;
+    for(n in B) bTotal+=(B[n]||{}).ms||0;
+    for(n in A){
+      if(!(n in B)) continue;
+      var am=(A[n]||{}).ms||0, bm=(B[n]||{}).ms||0;
+      shared.push({name:n,aMs:am,bMs:bm,both:Math.min(am,bm)});
+    }
+    shared.sort(function(x,y){return y.both-x.both||y.aMs+y.bMs-(x.aMs+x.bMs);});
+    // the weaker side again: sharing your whole library with someone who has a hundred
+    // games is not the same as two people who play exactly the same two things
+    var sa=shared.reduce(function(s,g){return s+g.aMs;},0), sb=shared.reduce(function(s,g){return s+g.bMs;},0);
+    var affinity=(aTotal&&bTotal)?Math.min(sa/aTotal,sb/bTotal):0;
+    return {games:shared,count:shared.length,affinity:affinity,aTotal:aTotal,bTotal:bTotal};
+  }
+
   /* ---------- signals UI ---------- */
   var DAYS=["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
   var sigIdx=null, sigCo=null;   // rebuilt per render; every card reads the same index
@@ -2040,6 +2091,13 @@ var ptA=null, ptB=null;   // the two people the pair timeline is comparing
       return sigRow(esc(r.names[0])+' <em style="opacity:.5;font-style:normal">~</em> '+esc(r.names[1]), ev);
     }).join("") : sigEmpty("Nothing meets the bar — it needs two people who share companions and have never once been in a call together.");
 
+    var ident=identityChanges(cache.identityHistory,cache.users,20);
+    $("#sig-ident").innerHTML = ident.length ? ident.map(function(r){
+      var was=r.was.length?'was '+r.was.slice(0,3).map(esc).join(', ')+(r.was.length>3?' +'+(r.was.length-3):"")
+        :r.looks+' look'+(r.looks===1?'':'s')+' ago';
+      return sigRow(esc(r.now),was+' · '+esc(ago(r.changedAt)));
+    }).join("") : sigEmpty("Nobody has been seen changing name, avatar or banner yet — this fills in from the moment the plugin starts watching, not retroactively.");
+
     renderPairPicker();
   }
 
@@ -2071,6 +2129,18 @@ var ptA=null, ptB=null;   // the two people the pair timeline is comparing
       +'</div></div>';
   }
 
+  /** Games both of them have been observed playing, longest shared time first. */
+  function sharedGamesHtml(a,b){
+    var s=sharedGames(cache.dossiers,a,b);
+    if(!s.count) return "";
+    return '<p class="hint" style="margin-top:14px;margin-bottom:2px">Games both play — '
+      +s.count+' shared, affinity '+Math.round(s.affinity*100)+'% of the weaker library</p>'
+      +'<div class="conn-list">'+s.games.slice(0,8).map(function(g){
+        return '<div class="conn-row"><span class="who">'+esc(g.name)+'</span><span class="conn-meta">'
+          +esc(uname(a))+' '+esc(fmtDur(g.aMs))+' · '+esc(uname(b))+' '+esc(fmtDur(g.bMs))+'</span></div>';
+      }).join("")+'</div>';
+  }
+
   function renderPairPicker(){
     var people=Object.keys(sigIdx.byUser)
       .sort(function(a,b){return sigIdx.byUser[b].length-sigIdx.byUser[a].length;}).slice(0,300);
@@ -2090,7 +2160,7 @@ var ptA=null, ptB=null;   // the two people the pair timeline is comparing
     // Both rhythms, side by side. Two people who are never in a call together but light
     // up the same hours is exactly the pattern the alt-account card scores, so being able
     // to look at it is the difference between trusting that number and checking it.
-    $("#pt-heat").innerHTML = ptA===ptB ? "" : heatmapHtml(ptA)+heatmapHtml(ptB);
+    $("#pt-heat").innerHTML = ptA===ptB ? "" : heatmapHtml(ptA)+heatmapHtml(ptB)+sharedGamesHtml(ptA,ptB);
     if(ptA===ptB){ meta.textContent="pick two different people"; body.innerHTML=""; return; }
     if(!t.count){
       meta.textContent="never recorded in the same channel at the same time";
