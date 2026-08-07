@@ -246,7 +246,11 @@ the layout never settled. Fixes:
   started a drag) as well as `contextmenu` (re-centre), and the following
   `pointerup` then opened the profile — so right-click did both. Both down-handlers
   now ignore any non-left button (`ev.button > 0`), so right-click only re-centres
-  and never opens or pans; left-click/tap still opens.
+  and never opens or pans.
+- **Left-click now only grabs/moves; opening moved to double-click.** A plain click
+  (which you also use to grab a node) no longer navigates away — a `dblclick` on a
+  node opens their Discord profile, right-click re-centres, and double-clicking the
+  background still resets the view.
 
 ## Known limits
 - Game/presence time is only visible for people whose presence Discord sends your
