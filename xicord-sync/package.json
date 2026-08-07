@@ -1,0 +1,14 @@
+{
+  "name": "xicord-sync",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Pooled dossier storage so several PCs share one dataset",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node _sync.test.mjs"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
