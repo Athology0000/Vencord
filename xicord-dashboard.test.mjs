@@ -686,5 +686,108 @@ for (const t of dcCases) {
 }
 ok("the dashboard and the plugin order identically across every case", agree, where);
 
+console.log("\n-- derived signals --");
+const SIGNAMES = ["indexSessions", "activityHeatmap", "pairTimeline", "followScores", "coPresenceIndex",
+    "inseparablePairs", "serverYield", "wilsonLower", "hourProfile", "cosine", "jaccard", "altCandidates"];
+const S = new Function(`${SIGNAMES.map(extract).join("\n")}; return {${SIGNAMES.join(",")}};`)();
+const H = 3600000, T0 = new Date(2026, 0, 5, 12, 0, 0).getTime(); // a Monday noon
+const sess = (u, c, at, ms, g) => ({ userId: u, channelId: c, guildId: g || "g1", join: at, leave: at + ms });
+
+let ix = S.indexSessions([sess("a", "c1", T0, H), sess("b", "c1", T0 + 60000, H), { bad: 1 }, null]);
+ok("only well-formed sessions are indexed", ix.count === 2, String(ix.count));
+ok("indexed by user and by channel", !!ix.byUser.a && ix.byChannel.c1.length === 2);
+ok("a session with no leave is a point, not a negative span",
+    S.indexSessions([{ userId: "a", channelId: "c", join: 100 }]).byUser.a[0].b === 100);
+
+console.log("\n-- who follows whom is directional --");
+// b is already in the room; a walks in two minutes later
+let fs = S.followScores(S.indexSessions([sess("b", "c1", T0, H), sess("a", "c1", T0 + 120000, H)]).byChannel);
+ok("the later arrival is the follower", fs.length === 1 && fs[0].follower === "a" && fs[0].leader === "b",
+    JSON.stringify(fs));
+ok("it is not counted in both directions", fs.filter(r => r.follower === "b").length === 0);
+fs = S.followScores(S.indexSessions([sess("b", "c1", T0, H), sess("a", "c1", T0, H)]).byChannel);
+ok("a dead-heat join is not following anyone", fs.length === 0, JSON.stringify(fs));
+fs = S.followScores(S.indexSessions([sess("b", "c1", T0, H), sess("a", "c1", T0 + 30 * 60000, H)]).byChannel);
+ok("arriving long after is not following either", fs.length === 0, JSON.stringify(fs));
+fs = S.followScores(S.indexSessions([sess("b", "c1", T0, 60000), sess("a", "c1", T0 + 120000, H)]).byChannel);
+ok("nor is arriving after they had already left", fs.length === 0, JSON.stringify(fs));
+
+console.log("\n-- inseparable pairs need a denominator worth dividing by --");
+// the exact false positive from real data: two people whose whole history is one short
+// shared call scored a perfect bond and buried every real pair
+let tiny = S.indexSessions([sess("x", "c1", T0, 60000), sess("y", "c1", T0, 60000)]);
+ok("a pair with almost no voice time of their own is excluded",
+    S.inseparablePairs(S.coPresenceIndex(tiny.byUser, tiny.byChannel)).length === 0);
+let bigIx = S.indexSessions([
+    sess("x", "c1", T0, H), sess("y", "c1", T0, H),          // an hour together
+    sess("x", "c2", T0 + 2 * H, H),                          // x also alone for an hour
+]);
+let bonds = S.inseparablePairs(S.coPresenceIndex(bigIx.byUser, bigIx.byChannel));
+ok("a real pair survives", bonds.length === 1, JSON.stringify(bonds));
+ok("the bond is the WEAKER direction — y is always with x, x only half the time",
+    Math.abs(bonds[0].bond - 0.5) < 0.01, String(bonds[0].bond));
+ok("both directions are reported", Math.abs(bonds[0].bWithA - 1) < 0.01 && Math.abs(bonds[0].aWithB - 0.5) < 0.01);
+
+console.log("\n-- server yield cannot be won on four data points --");
+ok("4/4 does not outrank 80/1362 once confidence is taken into account", (() => {
+    const y = S.serverYield({ small: 4, big: 1362 }, (() => {
+        const fm = {};
+        for (let i = 0; i < 4; i++) fm["s" + i] = { friends: ["f"], guilds: ["small"] };
+        for (let i = 0; i < 80; i++) fm["b" + i] = { friends: ["f"], guilds: ["big"] };
+        return fm;
+    })());
+    return y[0].id === "big";
+})());
+ok("a server below the floor is flagged rather than ranked",
+    S.serverYield({ tiny: 3 }, {})[0].enough === false);
+ok("the raw rate is still reported for the ones that qualify", (() => {
+    const y = S.serverYield({ g: 100 }, { a: { friends: ["f"], guilds: ["g"] } });
+    return Math.abs(y[0].yield - 0.01) < 1e-9 && y[0].enough === true;
+})());
+ok("wilson lower bound is below the point estimate and never negative",
+    S.wilsonLower(4, 4) < 1 && S.wilsonLower(0, 10) === 0 && S.wilsonLower(0, 0) === 0);
+
+console.log("\n-- alt detection refuses to guess --");
+const mk = n => { const out = []; for (let i = 0; i < n; i++) out.push(sess("a", "c" + i, T0 + i * H, 600000)); return out; };
+let altIx = S.indexSessions([...mk(6), ...mk(6).map(s => ({ ...s, userId: "b" }))]);
+let altCo = S.coPresenceIndex(altIx.byUser, altIx.byChannel);
+ok("sharing rooms but not one single person is not a case",
+    S.altCandidates(altIx, altCo, x => x).length === 0);
+// two accounts that never overlap but share two companions
+const withFriends = [
+    sess("a", "c1", T0, H), sess("f1", "c1", T0, H), sess("f2", "c1", T0, H),
+    sess("b", "c1", T0 + 5 * H, H), sess("f1", "c1", T0 + 5 * H, H), sess("f2", "c1", T0 + 5 * H, H),
+];
+for (let i = 0; i < 5; i++) { withFriends.push(sess("a", "c" + i, T0 + i * H, 60000), sess("b", "c" + i, T0 + (i + 20) * H, 60000)); }
+altIx = S.indexSessions(withFriends);
+altCo = S.coPresenceIndex(altIx.byUser, altIx.byChannel);
+const cands = S.altCandidates(altIx, altCo, x => x);
+ok("two never-overlapping accounts sharing companions are surfaced",
+    cands.some(c => (c.a === "a" && c.b === "b") || (c.a === "b" && c.b === "a")), JSON.stringify(cands.map(c => [c.a, c.b])));
+ok("anyone actually seen in a call together is excluded outright",
+    !cands.some(c => [c.a, c.b].sort().join() === "f1,f2"), JSON.stringify(cands.map(c => [c.a, c.b])));
+ok("the evidence travels with the score", cands.every(c => typeof c.sharedCompanions === "number" && "rhythmUsable" in c));
+// rhythm was scoring 100% for everyone, because one session is trivially parallel to one session
+ok("rhythm is not counted when there is no rhythm to compare",
+    cands.every(c => c.rhythmUsable === false ? c.rhythm === 0 : true), JSON.stringify(cands.map(c => c.rhythm)));
+
+console.log("\n-- heatmap and pair timeline --");
+const hm = S.activityHeatmap([{ u: "a", c: "c", a: T0, b: T0 + 2 * H }]);
+ok("a 2h session lands in two hour cells", hm.grid[1][12] > 0 && hm.grid[1][13] > 0, JSON.stringify(hm.peak));
+ok("total equals the session length", Math.abs(hm.total - 2 * H) < 1000, String(hm.total));
+ok("a session crossing midnight lands on both days", (() => {
+    const midnight = new Date(2026, 0, 5, 23, 30, 0).getTime();
+    const g = S.activityHeatmap([{ a: midnight, b: midnight + H }]).grid;
+    return g[1][23] > 0 && g[2][0] > 0;
+})());
+ok("a zero-length session does not break it", S.activityHeatmap([{ a: T0, b: T0 }]).total === 0);
+const pix = S.indexSessions([sess("a", "c1", T0, H), sess("b", "c1", T0 + 30 * 60000, H), sess("b", "c9", T0, H)]);
+const pt = S.pairTimeline(pix.byUser, "a", "b");
+ok("only same-channel overlap counts as a meeting", pt.count === 1, String(pt.count));
+ok("the overlap length is the intersection, not either session",
+    Math.abs(pt.totalMs - 30 * 60000) < 1000, String(pt.totalMs));
+ok("two people who never shared a channel have no timeline",
+    S.pairTimeline(pix.byUser, "a", "nobody").count === 0);
+
 console.log(`\n${pass} passed, ${fail} failed\n`);
 process.exit(fail ? 1 : 0);

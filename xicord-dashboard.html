@@ -189,6 +189,12 @@
     color:var(--data);background:var(--data-soft);padding:1px 6px;border-radius:9px;flex:none}
   .dc-num{color:var(--muted);font-size:12px;font-variant-numeric:tabular-nums;flex:none}
   .dc-when{color:var(--muted);font-size:12px;min-width:64px;text-align:right;flex:none}
+  /* when-are-they-online grid: 7 rows of 24, brightness = minutes present */
+  .hm{margin-top:4px;display:flex;flex-direction:column;gap:2px}
+  .hm-row{display:flex;align-items:center;gap:2px}
+  .hm-day{width:30px;flex:none;color:var(--muted);font-size:10px;font-family:var(--mono)}
+  .hm-cell{flex:1;height:13px;border-radius:2px;background:var(--data);min-width:5px}
+  .hm-tick{flex:1;color:var(--muted);font-size:10px;font-family:var(--mono)}
   .lk-card{border:1px solid var(--border);border-radius:12px;padding:12px 14px;margin-top:10px;background:var(--surface)}
   .lk-head{font-weight:700;display:flex;align-items:center;gap:8px;margin-bottom:6px}
   .lk-id{font-family:var(--mono);font-size:11px;color:var(--muted);font-weight:400}
@@ -320,6 +326,34 @@
       </div>
     </div>
 
+    <div id="sig-section" class="hidden">
+      <p class="eyebrow" style="margin-top:26px">Signals — computed, not recorded</p>
+      <div class="grid">
+        <div class="card"><h3>Who follows whom</h3>
+          <p class="hint">Arrived in a channel someone was already sitting in, within 5 minutes of them. The only directional signal here.</p>
+          <div id="sig-follow" class="conn-list"></div></div>
+        <div class="card"><h3>Inseparable pairs</h3>
+          <p class="hint">Share of each one's own voice time that had the other in the room — the weaker of the two directions, so it only scores when the dependence is mutual.</p>
+          <div id="sig-bond" class="conn-list"></div></div>
+        <div class="card"><h3>Server yield</h3>
+          <p class="hint">Findings per member swept. Ranked by the lower bound of the confidence interval, so a 4-member server can't outrank the one eating your lookups.</p>
+          <div id="sig-yield" class="conn-list"></div></div>
+        <div class="card"><h3>Possible alternate accounts</h3>
+          <p class="hint">Never once in a call together, yet sharing people and rooms. Circumstantial — the evidence is shown so you can judge it, not a verdict.</p>
+          <div id="sig-alts" class="conn-list"></div></div>
+      </div>
+      <div class="card wide" style="margin-top:14px">
+        <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:6px">
+          <h3 style="margin:0">How two people are connected</h3>
+          <select class="search" id="pt-a" style="width:auto;min-width:150px"></select>
+          <select class="search" id="pt-b" style="width:auto;min-width:150px"></select>
+          <span class="hint" id="pt-meta" style="margin:0"></span>
+        </div>
+        <div id="pt-heat"></div>
+        <div id="pt-body"></div>
+      </div>
+    </div>
+
     <div id="fm-section" class="hidden">
       <p class="eyebrow" style="margin-top:26px">Who added who — every server</p>
       <div class="grid">
@@ -351,6 +385,7 @@
         </div>
         <p class="hint" style="margin-top:0">Public-server voice channels only · dot size = times seen together · line weight = shared calls</p>
         <div class="plot" id="ch-dossier"></div>
+        <div id="dossier-heatmap"></div>
         <div id="dossier-companions"></div>
         <div id="dossier-games"></div>
       </div>
@@ -404,6 +439,7 @@
   "use strict";
   var $=function(s,r){return (r||document).querySelector(s);};
   var cache=null, range="all", tableSort={k:"join",dir:-1}, tableQuery="", dossierTarget=null, fmQuery="";
+var ptA=null, ptB=null;   // the two people the pair timeline is comparing
   // Local multi-account: several of YOUR OWN exports, cross-referenced in-browser.
   // Nothing is uploaded; this is all client-side over files you loaded yourself.
   var accounts=[], activeIdx=0, lookupQuery="";
@@ -806,6 +842,7 @@
     barH($("#ch-traits"),tr,{dim:true});
 
     renderMessages();
+    renderSignals();
     renderFriendMap();
     renderDossier();
     renderTable(S);
@@ -1710,6 +1747,366 @@
     $("#fm-more").textContent = rows.length>200 ? ("Showing first 200 of "+rows.length+" — narrow with the filter.") : "";
   }
 
+  /* ---------- derived signals ----------
+     Everything above reports what was recorded. These compute things that are not in
+     the data until you ask for them: direction, conditional strength, yield. Pure, and
+     driven off one shared index because they all want the same two views of history. */
+
+  function indexSessions(history){
+    var byUser=Object.create(null), byChannel=Object.create(null), n=0;
+    (history||[]).forEach(function(s){
+      if(!s||typeof s.userId!=="string"||typeof s.channelId!=="string"||typeof s.join!=="number") return;
+      // a session with no leave is a point in time, not a negative-length span
+      var end=(typeof s.leave==="number"&&s.leave>s.join)?s.leave:s.join;
+      var e={u:s.userId,c:s.channelId,g:s.guildId,a:s.join,b:end};
+      (byUser[e.u]||(byUser[e.u]=[])).push(e);
+      (byChannel[e.c]||(byChannel[e.c]=[])).push(e);
+      n++;
+    });
+    return {byUser:byUser,byChannel:byChannel,count:n};
+  }
+
+  /** Minutes present per weekday x hour, walked across hour boundaries. */
+  function activityHeatmap(list){
+    var grid=[],d,h;
+    for(d=0;d<7;d++){ grid.push([]); for(h=0;h<24;h++) grid[d].push(0); }
+    var total=0, starts=0;
+    (list||[]).forEach(function(e){
+      var t=e.a, end=e.b, guard=0;
+      var st=new Date(e.a); grid[st.getDay()][st.getHours()]+=0; starts++;
+      // a long-running session must not spin forever; a fortnight is already absurd
+      while(t<end && guard++<24*14){
+        var dt=new Date(t);
+        var nextHour=new Date(dt.getFullYear(),dt.getMonth(),dt.getDate(),dt.getHours()+1,0,0,0).getTime();
+        var slice=Math.min(end,nextHour)-t;
+        grid[dt.getDay()][dt.getHours()]+=slice;
+        total+=slice; t=Math.min(end,nextHour);
+      }
+    });
+    var peak=null,max=0;
+    for(d=0;d<7;d++)for(h=0;h<24;h++) if(grid[d][h]>max){max=grid[d][h];peak={day:d,hour:h,ms:grid[d][h]};}
+    return {grid:grid,total:total,sessions:starts,peak:peak,max:max};
+  }
+
+  /** Every time two people were in the same channel at the same time. */
+  function pairTimeline(byUser,a,b){
+    var A=byUser[a]||[], B=byUser[b]||[], meets=[];
+    A.forEach(function(x){ B.forEach(function(y){
+      if(x.c!==y.c) return;
+      var s=Math.max(x.a,y.a), e=Math.min(x.b,y.b);
+      if(e<s) return;
+      meets.push({start:s,end:e,ms:e-s,channelId:x.c,guildId:x.g||y.g});
+    });});
+    meets.sort(function(p,q){return p.start-q.start||p.end-q.end;});
+    var chans=Object.create(null), guilds=Object.create(null), total=0;
+    meets.forEach(function(m){
+      chans[m.channelId]=(chans[m.channelId]||0)+1;
+      if(m.guildId) guilds[m.guildId]=(guilds[m.guildId]||0)+1;
+      total+=m.ms;
+    });
+    return {meetings:meets, count:meets.length, totalMs:total,
+      first:meets.length?meets[0].start:0, last:meets.length?meets[meets.length-1].start:0,
+      channels:chans, guilds:guilds};
+  }
+
+  /**
+   * Who arrives after whom. Everything else in the suite is symmetric — "A and B were in
+   * a call" — but joining a room someone is already sitting in, again and again, is
+   * directional and is the only behavioural signal here that has a direction at all.
+   * A dead-heat join is not following, so the comparison is strict.
+   */
+  function followScores(byChannel,windowMs){
+    windowMs=windowMs||5*60000;
+    var pair=Object.create(null), joins=Object.create(null);
+    for(var c in byChannel){
+      var ss=byChannel[c];
+      for(var i=0;i<ss.length;i++){
+        var a=ss[i], any=false;
+        for(var j=0;j<ss.length;j++){
+          if(i===j) continue;
+          var b=ss[j];
+          if(b.u===a.u) continue;
+          // b was already in the room when a arrived, and a arrived soon after b did
+          if(b.a<a.a && a.a<=b.b && (a.a-b.a)<=windowMs){
+            pair[a.u+">"+b.u]=(pair[a.u+">"+b.u]||0)+1; any=true;
+          }
+        }
+        if(any) joins[a.u]=(joins[a.u]||0)+1;
+      }
+    }
+    return Object.keys(pair).map(function(k){
+      var p=k.split(">");
+      return {follower:p[0],leader:p[1],times:pair[k],ofJoins:joins[p[0]]||0,
+        share: joins[p[0]] ? pair[k]/joins[p[0]] : 0};
+    }).sort(function(x,y){return y.times-x.times||y.share-x.share||(x.follower<y.follower?-1:1);});
+  }
+
+  /**
+   * Overlap per pair, plus each person's total, so the CONDITIONAL can be taken.
+   * Named apart from the older coPresence() above, which powers the "Seen together
+   * most" chart: a second function of the same name would have quietly replaced it.
+   */
+  function coPresenceIndex(byUser,byChannel){
+    var total=Object.create(null), ov=Object.create(null), partners=Object.create(null);
+    for(var u in byUser) total[u]=byUser[u].reduce(function(s,e){return s+(e.b-e.a);},0);
+    for(var c in byChannel){
+      var ss=byChannel[c];
+      for(var i=0;i<ss.length;i++)for(var j=i+1;j<ss.length;j++){
+        var a=ss[i],b=ss[j];
+        if(a.u===b.u) continue;
+        var s=Math.max(a.a,b.a), e=Math.min(a.b,b.b);
+        if(e<s) continue;
+        var k=a.u<b.u?a.u+"|"+b.u:b.u+"|"+a.u;
+        ov[k]=(ov[k]||0)+Math.max(0,e-s);
+        (partners[a.u]||(partners[a.u]=Object.create(null)))[b.u]=1;
+        (partners[b.u]||(partners[b.u]=Object.create(null)))[a.u]=1;
+      }
+    }
+    return {total:total,overlap:ov,partners:partners};
+  }
+
+  /**
+   * Inseparable pairs. NOT "seen together most" — that ranking just finds whoever spends
+   * the most time in voice at all. This asks what SHARE of each person's time had the
+   * other in the room, and keeps the weaker of the two directions, so a pair only scores
+   * highly when the dependence runs both ways.
+   */
+  function inseparablePairs(co,opts){
+    opts=opts||{};
+    // A ratio needs a denominator worth dividing by. Without a floor on each person's
+    // OWN total, two people whose entire recorded history is one shared 7-minute call
+    // score a perfect 100% and bury every real pair — a true statement about nothing.
+    var minMs=opts.minMs||60000, minTotal=opts.minTotalMs||10*60000;
+    var out=[];
+    for(var k in co.overlap){
+      var p=k.split("|"), ta=co.total[p[0]]||0, tb=co.total[p[1]]||0, ms=co.overlap[k];
+      if(ms<minMs || ta<minTotal || tb<minTotal) continue;
+      var aw=ta?Math.min(1,ms/ta):0, bw=tb?Math.min(1,ms/tb):0;
+      out.push({a:p[0],b:p[1],ms:ms,aTotal:ta,bTotal:tb,aWithB:aw,bWithA:bw,bond:Math.min(aw,bw)});
+    }
+    return out.sort(function(x,y){return y.bond-x.bond||y.ms-x.ms;});
+  }
+
+  /**
+   * Which servers the sweep is actually getting anything out of. The run in progress
+   * costs one lookup per member, so a server with a thousand loaded members and no
+   * findings is where the hours are going.
+   */
+  // Lower bound of the 95% confidence interval on a proportion. 4-out-of-4 and
+  // 40-out-of-1086 are both "a rate", but only one of them is EVIDENCE of a rate, and a
+  // raw ratio cannot tell them apart — it just puts the four-member server on top.
+  function wilsonLower(hits,n){
+    if(!n) return 0;
+    var z=1.96, p=hits/n, z2=z*z;
+    var lo=(p + z2/(2*n) - z*Math.sqrt((p*(1-p) + z2/(4*n))/n)) / (1 + z2/n);
+    return Math.max(0,lo);
+  }
+  function serverYield(perGuild,friendMap,opts){
+    opts=opts||{};
+    var minSwept=opts.minSwept||20;
+    var found=Object.create(null);
+    for(var id in (friendMap||{})){
+      var gs=(friendMap[id]||{}).guilds;
+      if(Array.isArray(gs)) gs.forEach(function(g){ found[g]=(found[g]||0)+1; });
+    }
+    var out=[], g;
+    for(g in (perGuild||{})) out.push({id:g,swept:perGuild[g]||0,found:found[g]||0});
+    for(g in found) if(!perGuild||!(g in perGuild)) out.push({id:g,swept:0,found:found[g]});
+    out.forEach(function(r){
+      r.yield = r.swept ? r.found/r.swept : 0;
+      r.confident = wilsonLower(r.found,r.swept);
+      // below the floor the rate is not wrong, it is simply unmeasured — the UI says so
+      // rather than ranking a 2-member server above the one eating all your lookups
+      r.enough = r.swept >= minSwept;
+    });
+    return out.sort(function(a,b){
+      return (b.enough?1:0)-(a.enough?1:0)
+        || b.confident-a.confident || b.found-a.found || b.swept-a.swept;
+    });
+  }
+
+  /** 24-slot histogram of when someone is in voice, for comparing rhythms. */
+  function hourProfile(list){
+    var h=[],i; for(i=0;i<24;i++) h.push(0);
+    (list||[]).forEach(function(e){ h[new Date(e.a).getHours()]++; });
+    return h;
+  }
+  function cosine(p,q){
+    var dot=0,na=0,nb=0;
+    for(var i=0;i<p.length;i++){ dot+=p[i]*q[i]; na+=p[i]*p[i]; nb+=q[i]*q[i]; }
+    return (na&&nb) ? dot/Math.sqrt(na*nb) : 0;
+  }
+  function jaccard(a,b){
+    var inter=0,uni=0,k;
+    for(k in a){ uni++; if(k in b) inter++; }
+    for(k in b) if(!(k in a)) uni++;
+    return uni?inter/uni:0;
+  }
+
+  /**
+   * Accounts that might be the same person. Stated carefully, because this is the one
+   * feature here that makes an accusation: it returns CANDIDATES with their evidence,
+   * never a verdict, and the UI shows the evidence rather than just the score.
+   *
+   * The hard gate is never having been in a voice channel together — two accounts seen
+   * talking at the same moment are two people, whatever else they share. Everything
+   * after that is circumstantial: the same friends, the same rooms, the same hours.
+   */
+  function altCandidates(idx,co,nameOf,opts){
+    opts=opts||{};
+    // Every threshold here exists because of a specific false positive seen in real data:
+    //   * minSessions 3 let two people with one visit each "match" perfectly;
+    //   * rhythm scored 100% for everyone, because a 24-slot histogram with a single
+    //     entry is trivially parallel to any other — so it only counts once both sides
+    //     have been seen across several different hours;
+    //   * sharing a room but not one single person is not evidence of anything except a
+    //     busy channel, so a shared companion is now a hard requirement.
+    var minSessions=opts.minSessions||5, minShared=opts.minShared||2;
+    var minHours=opts.minHours||3, limit=opts.limit||20;
+    var users=Object.keys(idx.byUser).filter(function(u){return idx.byUser[u].length>=minSessions;});
+    var chans=Object.create(null), hours=Object.create(null), spread=Object.create(null);
+    users.forEach(function(u){
+      var c=Object.create(null);
+      idx.byUser[u].forEach(function(e){ c[e.c]=1; });
+      chans[u]=c;
+      hours[u]=hourProfile(idx.byUser[u]);
+      spread[u]=hours[u].filter(function(n){return n>0;}).length;
+    });
+    var out=[];
+    for(var i=0;i<users.length;i++)for(var j=i+1;j<users.length;j++){
+      var a=users[i], b=users[j];
+      var k=a<b?a+"|"+b:b+"|"+a;
+      if(co.overlap[k]) continue;                        // seen together => two people
+      var pa=co.partners[a]||{}, pb=co.partners[b]||{};
+      var shared=0; for(var p in pa) if(p in pb) shared++;
+      if(shared<minShared) continue;                     // no common people, no case
+      var friends=jaccard(pa,pb), rooms=jaccard(chans[a],chans[b]);
+      // rhythm is only admissible when there is a rhythm to compare
+      var rhythmUsable=spread[a]>=minHours && spread[b]>=minHours;
+      var rhythm=rhythmUsable?cosine(hours[a],hours[b]):0;
+      var score=rhythmUsable ? friends*0.5+rooms*0.3+rhythm*0.2
+                             : friends*0.65+rooms*0.35;  // redistribute, never assume
+      out.push({a:a,b:b,score:score,sharedCompanions:shared,
+        companionOverlap:friends,roomOverlap:rooms,rhythm:rhythm,rhythmUsable:rhythmUsable,
+        aSessions:idx.byUser[a].length,bSessions:idx.byUser[b].length,
+        names:[nameOf?nameOf(a):a, nameOf?nameOf(b):b]});
+    }
+    return out.sort(function(x,y){return y.score-x.score||y.sharedCompanions-x.sharedCompanions;})
+      .slice(0,limit);
+  }
+
+  /* ---------- signals UI ---------- */
+  var DAYS=["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+  var sigIdx=null, sigCo=null;   // rebuilt per render; every card reads the same index
+
+  function pct(x){ return Math.round(x*100)+"%"; }
+  function sigRow(left,right){
+    return '<div class="conn-row"><span class="who">'+left+'</span><span class="conn-meta">'+right+'</span></div>';
+  }
+  function sigEmpty(why){ return '<div class="conn-empty">'+esc(why)+'</div>'; }
+
+  function renderSignals(){
+    var sec=$("#sig-section");
+    sigIdx=indexSessions(cache.history);
+    if(sigIdx.count<10){ sec.classList.add("hidden"); return; }
+    sec.classList.remove("hidden");
+    sigCo=coPresenceIndex(sigIdx.byUser,sigIdx.byChannel);
+
+    var fol=followScores(sigIdx.byChannel).filter(function(r){return r.times>=2;});
+    $("#sig-follow").innerHTML = fol.length ? fol.slice(0,10).map(function(r){
+      return sigRow(esc(uname(r.follower))+' <em style="opacity:.5;font-style:normal">follows</em> '+esc(uname(r.leader)),
+        r.times+'× · '+pct(r.share)+' of their joins');
+    }).join("") : sigEmpty("Nobody has arrived after the same person twice yet.");
+
+    var bond=inseparablePairs(sigCo);
+    $("#sig-bond").innerHTML = bond.length ? bond.slice(0,10).map(function(r){
+      return sigRow(esc(uname(r.a))+' + '+esc(uname(r.b)),
+        pct(r.bond)+' · '+esc(fmtDur(r.ms))+' together');
+    }).join("") : sigEmpty("No pair yet has enough voice time of their own to take a ratio from.");
+
+    var ys=serverYield((cache.roster||{}).perGuild,cache.friendMap);
+    var enough=ys.filter(function(r){return r.enough;});
+    $("#sig-yield").innerHTML = enough.length ? enough.slice(0,10).map(function(r){
+      return sigRow(esc(trunc(gname(r.id),34)),
+        r.found+' / '+r.swept+' · '+(r.yield*100).toFixed(1)+'%');
+    }).join("")+(ys.length>enough.length
+        ? '<div class="conn-empty">'+(ys.length-enough.length)+' server(s) had too few members swept to judge.</div>' : "")
+      : sigEmpty("No server has been swept deeply enough to compare yet.");
+
+    var alts=altCandidates(sigIdx,sigCo,uname,{limit:10});
+    $("#sig-alts").innerHTML = alts.length ? alts.map(function(r){
+      var ev=r.sharedCompanions+' shared · rooms '+pct(r.roomOverlap)
+        +(r.rhythmUsable?' · hours '+pct(r.rhythm):' · hours n/a');
+      return sigRow(esc(r.names[0])+' <em style="opacity:.5;font-style:normal">~</em> '+esc(r.names[1]), ev);
+    }).join("") : sigEmpty("Nothing meets the bar — it needs two people who share companions and have never once been in a call together.");
+
+    renderPairPicker();
+  }
+
+  /**
+   * Heatmap of when one person is actually in voice. Returns HTML rather than writing to
+   * a fixed host: it was originally bolted to the dossier section, which is hidden until
+   * a dossier subject exists — so on an account with plenty of voice history and no
+   * subjects yet it silently rendered nothing at all. Anyone with sessions can have one.
+   */
+  function heatmapHtml(subjectId){
+    var list=(sigIdx&&sigIdx.byUser[subjectId])||[];
+    if(!list.length) return "";
+    var hm=activityHeatmap(list);
+    if(!hm.max) return "";
+    var cells="";
+    for(var d=0;d<7;d++){
+      cells+='<div class="hm-row"><span class="hm-day">'+DAYS[d]+'</span>';
+      for(var h=0;h<24;h++){
+        var v=hm.grid[d][h], a=v?(0.12+0.88*(v/hm.max)):0;
+        cells+='<i class="hm-cell" style="opacity:'+a.toFixed(3)+'" title="'+DAYS[d]+' '+h+':00 — '+esc(fmtDur(v))+'"></i>';
+      }
+      cells+='</div>';
+    }
+    return '<p class="hint" style="margin-top:14px;margin-bottom:4px">When '+esc(uname(subjectId))
+      +' is in voice — '+hm.sessions+' sessions, busiest '+DAYS[hm.peak.day]+' '+hm.peak.hour
+      +':00 · your local time</p><div class="hm">'+cells
+      +'<div class="hm-row"><span class="hm-day"></span>'
+      +[0,6,12,18].map(function(h){return '<span class="hm-tick">'+h+'</span>';}).join("")
+      +'</div></div>';
+  }
+
+  function renderPairPicker(){
+    var people=Object.keys(sigIdx.byUser)
+      .sort(function(a,b){return sigIdx.byUser[b].length-sigIdx.byUser[a].length;}).slice(0,300);
+    if(!people.length) return;
+    if(!ptA||people.indexOf(ptA)<0) ptA=people[0];
+    if(!ptB||people.indexOf(ptB)<0) ptB=Object.keys(sigCo.partners[ptA]||{})[0]||people[1]||people[0];
+    var opts=function(sel){return people.map(function(id){
+      return '<option value="'+esc(id)+'"'+(id===sel?' selected':'')+'>'+esc(trunc(uname(id),24))+'</option>';}).join("");};
+    $("#pt-a").innerHTML=opts(ptA);
+    $("#pt-b").innerHTML=opts(ptB);
+    renderPairTimeline();
+  }
+
+  function renderPairTimeline(){
+    var t=pairTimeline(sigIdx.byUser,ptA,ptB);
+    var meta=$("#pt-meta"), body=$("#pt-body");
+    // Both rhythms, side by side. Two people who are never in a call together but light
+    // up the same hours is exactly the pattern the alt-account card scores, so being able
+    // to look at it is the difference between trusting that number and checking it.
+    $("#pt-heat").innerHTML = ptA===ptB ? "" : heatmapHtml(ptA)+heatmapHtml(ptB);
+    if(ptA===ptB){ meta.textContent="pick two different people"; body.innerHTML=""; return; }
+    if(!t.count){
+      meta.textContent="never recorded in the same channel at the same time";
+      body.innerHTML='<div class="conn-empty">Nothing observed between '+esc(uname(ptA))+' and '+esc(uname(ptB))
+        +'. That is not proof they have never met — only that no shared public call was recorded.</div>';
+      return;
+    }
+    meta.textContent=t.count+" shared call"+(t.count===1?"":"s")+" · "+fmtDur(t.totalMs)
+      +" together · first "+fmtDate(t.first);
+    body.innerHTML='<div class="conn-list">'+t.meetings.slice(-25).reverse().map(function(m){
+      return '<div class="conn-row"><span class="who">'+esc(cname(m.channelId))+'</span>'
+        +'<span class="conn-meta">'+esc(fmtDate(m.start))+' · '+esc(fmtDur(m.ms))+'</span></div>';
+    }).join("")+'</div>'
+      +(t.count>25?'<p class="trow-more">Showing the 25 most recent of '+t.count+'.</p>':"");
+  }
+
   /* ---------- call companions, ordered the way the in-Discord dossier orders them ---------- */
   // Deliberately the same rules as orderCompanions() in xicordDossier.tsx: the people the
   // subject has ADDED lead, most recently in a call at the top, and everyone below stays
@@ -1786,6 +2183,7 @@
     $("#dossier-meta").textContent=nComp+" companion"+(nComp===1?"":"s")+" across "+nGuild+" server"+(nGuild===1?"":"s")
       +" · the graph reacts as you move the cursor · drag a node to rearrange, drag the background to pan, double-click to reset";
     network($("#ch-dossier"),dossierTarget,view);
+    $("#dossier-heatmap").innerHTML=heatmapHtml(dossierTarget);
     renderCompanions(view,dossierTarget);
 
     /* games this person has been seen playing (via presence) */
@@ -1830,6 +2228,10 @@
   });
   $("#search").addEventListener("input",function(e){ tableQuery=e.target.value; if(cache) renderTable(filteredSessions()); });
   $("#fm-search").addEventListener("input",function(e){ fmQuery=e.target.value; if(cache) renderFriendMapList(); });
+  // Only the timeline is redrawn, not the whole signals block: the four cards above are
+  // about everyone and do not change when you pick a different pair.
+  $("#pt-a").addEventListener("change",function(e){ ptA=e.target.value; if(sigIdx) renderPairTimeline(); });
+  $("#pt-b").addEventListener("change",function(e){ ptB=e.target.value; if(sigIdx) renderPairTimeline(); });
   $("#dossier-select").addEventListener("change",function(e){ dossierTarget=e.target.value; if(cache) renderDossier(); });
   $("#fullDossierBtn").addEventListener("click",openFullDossier);
   $("#full-close").addEventListener("click",closeFullDossier);
