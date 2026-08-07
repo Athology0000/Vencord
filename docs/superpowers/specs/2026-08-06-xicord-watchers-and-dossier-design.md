@@ -93,11 +93,20 @@ so the same component drives both views:
 - **One person** — the previous ego network (target anchored in the middle).
 - **Full dossier** — everyone with a record, wired to everyone they have shared a
   call with. Pairs are deduplicated (both people hold a record of the same
-  pairing; the stronger count wins), nodes are capped at the best-connected 60 to
-  keep the O(n²) repulsion pass cheap and the picture legible, node size tracks
-  total connection strength, and Target-trait members are drawn in brand blue.
-- Link rest length scales with node count (`620/√n`, clamped), otherwise a large
-  web sprawls straight off the canvas.
+  pairing; the stronger count wins), node size tracks total connection strength,
+  and Target-trait members are drawn in brand blue.
+- Size is a setting (`fullGraphNodes`, default 150, up to 400) rather than a hard
+  cap. **Measured**: the simulation costs 0.38ms/frame at 400 nodes against a
+  16.7ms 60fps budget, so the physics was never the constraint — SVG paint and
+  readability are.
+- The layout adapts to density: canvas grows taller (504px at 60 nodes → 1100px
+  at 300), dot radius scales `8/√n`, and only the best-connected carry labels
+  (60 labels at 60 nodes, 42 at 300) since `ids` is sorted strongest-first.
+- **Repulsion has a distance cutoff** of `2.6 × link length`. Without it, pairs far
+  enough apart to be individually negligible summed across hundreds of nodes into
+  a force that inflated the web off-canvas — 21 of 300 nodes escaped the frame.
+  The cutoff fixed that *and* made the sim 5× faster (1.90ms → 0.38ms at 400).
+  The inward centring pull also scales with `√n` to balance the extra outward push.
 
 ## Known limits
 - Watchers only fire for what Discord tells your client (shared servers, visible
