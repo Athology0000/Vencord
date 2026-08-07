@@ -242,6 +242,11 @@ the layout never settled. Fixes:
   lightweight redraw loop stays alive on hover only so the pill/swell update.
 - A near-miss on the background now grabs the nearest node (within `r + 12`px)
   instead of starting a pan, so small nodes are easy to pick up.
+- **Right-click opened the profile too.** A right-click fired `pointerdown` (which
+  started a drag) as well as `contextmenu` (re-centre), and the following
+  `pointerup` then opened the profile — so right-click did both. Both down-handlers
+  now ignore any non-left button (`ev.button > 0`), so right-click only re-centres
+  and never opens or pans; left-click/tap still opens.
 
 ## Known limits
 - Game/presence time is only visible for people whose presence Discord sends your
