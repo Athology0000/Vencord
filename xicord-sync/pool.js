@@ -43,11 +43,24 @@ function unionIds(a = [], b = []) {
     return out;
 }
 
+/**
+ * `sat` — when the SERVER accepted this record, stamped on arrival and merged by highest.
+ *
+ * Every other stamp here is a client's account of when something happened out in the
+ * world. That is the wrong clock to answer "what is new to you?" with: a call that ended
+ * at 12:00 and syncs at 12:07 has last=12:00, so a puller holding a 12:05 watermark would
+ * filter it out — on that pull and on every pull after, because 12:00 never becomes newer.
+ * A record can arrive long after it happened; a delta has to key on the arrival.
+ *
+ * It also covers the merges that change something OTHER than `last` — a newly unioned
+ * guild, an earlier `first` — which would otherwise never appear in a delta at all.
+ */
 function mergePerson(a = {}, b = {}) {
     return {
         guilds: unionIds(a.guilds, b.guilds),
         first: minStamp(a.first, b.first),
-        last: maxNum(a.last, b.last)
+        last: maxNum(a.last, b.last),
+        sat: maxNum(a.sat, b.sat)
     };
 }
 
@@ -56,7 +69,8 @@ function mergeCall(a = {}, b = {}) {
         ms: maxNum(a.ms, b.ms),
         count: maxNum(a.count, b.count),
         last: maxNum(a.last, b.last),
-        guilds: unionIds(a.guilds, b.guilds)
+        guilds: unionIds(a.guilds, b.guilds),
+        sat: maxNum(a.sat, b.sat)
     };
 }
 
@@ -68,7 +82,11 @@ function mergeCall(a = {}, b = {}) {
 function mergeUser(a, b) {
     if (!a) return b;
     if (!b) return a;
-    return (b.at ?? 0) > (a.at ?? 0) ? b : a;
+    const win = (b.at ?? 0) > (a.at ?? 0) ? b : a;
+    // The name that wins is the fresher RESOLUTION; the arrival stamp is the later of the
+    // two regardless, or re-sending an old name would hide the record from deltas.
+    const sat = maxNum(a.sat, b.sat);
+    return sat === (win.sat ?? 0) ? win : { ...win, sat };
 }
 
 /** Combine two pool slices. Commutative and idempotent. */
@@ -90,9 +108,38 @@ function mergePool(a = {}, b = {}) {
 }
 
 function mergeAllPools(slices) {
-    let out = { people: {}, calls: {}, users: {} };
-    for (const s of slices) out = mergePool(out, s);
+    const out = { people: {}, calls: {}, users: {} };
+    // Folded IN PLACE. `mergePool` allocates a fresh result and re-keys the union of both
+    // sides, so accumulating with it costs the size of the whole pool once per slice — on
+    // the cold rebuild, which is the path that was exhausting the container. Merging into
+    // the accumulator costs the size of each SLICE instead, for the same answer: the merge
+    // is highest-wins on every field, so it does not care how the records are grouped.
+    for (const s of slices) mergePoolInto(out, s);
     return out;
+}
+
+/**
+ * Apply one slice INTO an already-merged pool, in place.
+ *
+ * mergePool() rebuilds the whole thing to combine two pools, which is what you want for a
+ * cold merge and badly wrong for absorbing a push: the cost is the size of the POOL, not
+ * of the push, so a client sending a few hundred pairs made the server re-key 118k of
+ * them. Doing it in place is the size of the push instead.
+ *
+ * Equivalent to re-merging from disk because the merge is highest-wins on every field —
+ * associative and commutative, so the order slices arrive in cannot change the result.
+ * That is the same property that lets clients push in batches. If it ever stops holding,
+ * this optimisation stops being valid with it.
+ */
+function mergePoolInto(base, delta) {
+    const pb = delta.people || {};
+    for (const id in pb) base.people[id] = mergePerson(base.people[id], pb[id]);
+    const cb = delta.calls || {};
+    for (const k in cb) base.calls[k] = mergeCall(base.calls[k], cb[k]);
+    const ub = delta.users || {};
+    if (!base.users) base.users = {};
+    for (const id in ub) base.users[id] = mergeUser(base.users[id], ub[id]);
+    return base;
 }
 
 /** Reject anything that is not the shape we store. */
@@ -134,12 +181,45 @@ function sanitizePool(payload) {
 }
 
 /**
+ * Tombstones as `{ id: whenRetracted }`.
+ *
+ * Accepts the wire form (an array of ids, stamped `now` because the client is telling us
+ * about it as it happens) and the stored form (already a map), so a blob written by an
+ * older build still reads.
+ */
+function stampRetractions(value, now) {
+    const out = {};
+    if (Array.isArray(value)) {
+        for (const id of value) if (isSnowflake(id)) out[id] = now;
+    } else if (value && typeof value === "object") {
+        for (const [id, at] of Object.entries(value)) {
+            if (!isSnowflake(id)) continue;
+            // an unparseable stamp still retracts; it just cannot outrank anything
+            out[id] = maxNum(at, 0);
+        }
+    }
+    return out;
+}
+
+/**
  * The private blob: account-relative, never merged across users, but a device still
  * pushes deltas of it, so it merges with ITS OWN previous state.
  */
-function sanitizePrivate(payload) {
-    const out = { friends: {}, watching: [], notes: {} };
+function sanitizePrivate(payload, now = Date.now()) {
+    const out = { friends: {}, watching: [], notes: {}, retracted: {} };
     if (!payload || typeof payload !== "object") return out;
+    // Explicit tombstones. A push carries the client's whole friend map, but a BLOB can be
+    // shared by several accounts, so the server cannot treat any one push as the complete
+    // set and replace — that would wipe the other account's findings. Omission therefore
+    // cannot mean "delete", and a retraction needs to be said out loud.
+    //
+    // Stamped with the SERVER's clock on arrival and kept, rather than applied once and
+    // forgotten. A tombstone that does not outlive its own push is not a tombstone: the
+    // other account on the blob still holds the name, and its next routine push — carrying
+    // an OLD `at` it has no reason to have changed — would put the retracted name straight
+    // back. Keeping the stamp lets a genuine re-friend (a newer `at`) win while a stale
+    // re-assertion loses.
+    out.retracted = stampRetractions(payload.retracted, now);
 
     for (const [id, f] of Object.entries(payload.friends || {})) {
         if (!isSnowflake(id) || !f || typeof f !== "object") continue;
@@ -166,13 +246,23 @@ function sanitizePrivate(payload) {
  * unfriending has to be able to remove a name, and a union could never delete one.
  */
 function mergePrivate(a = {}, b = {}) {
-    const out = { friends: {}, watching: [], notes: {} };
+    const out = { friends: {}, watching: [], notes: {}, retracted: {} };
     const fa = a.friends || {}, fb = b.friends || {};
+    // Every tombstone this blob has ever been told about, newest stamp winning. These are
+    // KEPT in the blob, not consumed by the merge that first saw them — see sanitizePrivate.
+    const ra = stampRetractions(a.retracted, 0), rb = stampRetractions(b.retracted, 0);
+    for (const id of new Set([...Object.keys(ra), ...Object.keys(rb)])) {
+        out.retracted[id] = maxNum(ra[id], rb[id]);
+    }
     for (const id of new Set([...Object.keys(fa), ...Object.keys(fb)])) {
         const x = fa[id], y = fb[id];
-        if (!x) { out.friends[id] = y; continue; }
-        if (!y) { out.friends[id] = x; continue; }
-        out.friends[id] = (y.at ?? 0) >= (x.at ?? 0) ? y : x;
+        const winner = !x ? y : !y ? x : ((y.at ?? 0) >= (x.at ?? 0) ? y : x);
+        // A retraction beats any claim that is not strictly newer than it. Re-adding
+        // someone genuinely (a fresh `at`) still works; re-asserting a name the pusher
+        // simply has not noticed is gone does not.
+        const tomb = out.retracted[id] ?? 0;
+        if (tomb > 0 && (winner?.at ?? 0) <= tomb) continue;
+        out.friends[id] = winner;
     }
     // the watchlist is whatever the newer push says, so removals stick
     out.watching = Array.isArray(b.watching) && b.watching.length ? unionIds(b.watching, [])
@@ -227,6 +317,7 @@ function mergeFriendGraphs(blobs) {
 }
 
 module.exports = {
-    mergePool, mergeAllPools, mergeCall, mergePerson, mergeUser, sanitizePool,
-    sanitizePrivate, mergePrivate, mergeFriendGraphs, pairKey, isSnowflake, maxNum, minStamp
+    mergePool, mergeAllPools, mergePoolInto, mergeCall, mergePerson, mergeUser, sanitizePool,
+    sanitizePrivate, mergePrivate, mergeFriendGraphs, stampRetractions,
+    pairKey, isSnowflake, maxNum, minStamp
 };

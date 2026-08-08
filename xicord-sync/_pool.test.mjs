@@ -148,9 +148,15 @@ ok("no token is 401", (await call("/v1/pool")).status === 401);
 ok("wrong token is 401", (await call("/v1/pool", { headers: H("nope-nope-nope-nope") })).status === 401);
 
 console.log("\n-- re-pushing changes nothing --");
-const before = require("fs").readFileSync(join(DATA, "pool", `${A}.json`), "utf8");
+// Everything except `sat`, the moment the server accepted the record. That one field is
+// SUPPOSED to move: it is what a delta keys on, and it records when we were last told a
+// thing rather than when the thing happened. The observation is new even when the fact is
+// not. What must not move is the pooled content — no counter creeps, no duration doubles.
+const stripSat = txt => JSON.stringify(JSON.parse(txt), (k, v) => (k === "sat" ? undefined : v));
+const sliceOf = () => require("fs").readFileSync(join(DATA, "pool", `${A}.json`), "utf8");
+const before = stripSat(sliceOf());
 await call("/v1/pool", { method: "POST", headers: H(ANA), body: JSON.stringify(anaPool) });
-ok("the slice is byte-identical", require("fs").readFileSync(join(DATA, "pool", `${A}.json`), "utf8") === before);
+ok("the slice is identical apart from the arrival stamp", stripSat(sliceOf()) === before);
 
 console.log("\n-- v1 routes still work while devices migrate --");
 r = await call("/v1/pull", { headers: H(ANA) });

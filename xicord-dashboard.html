@@ -54,7 +54,18 @@
   .btn.primary{background:#181818;color:var(--ink);border-color:var(--border-lit);
     box-shadow:inset 0 1px 0 rgba(255,255,255,.06),0 0 24px -12px rgba(255,255,255,.5)}
   .btn.primary:hover{background:#202020;border-color:rgba(255,255,255,.28)}
-  .btn:focus-visible,.seg button:focus-visible{outline:2px solid var(--border-lit);outline-offset:2px}
+  /* One visible focus treatment for everything focusable, not just buttons. A keyboard
+     user who cannot see where they are cannot use the page at all, and the text inputs
+     below were previously clearing their outline without putting anything back. */
+  .btn:focus-visible,.seg button:focus-visible,
+  input:focus-visible,textarea:focus-visible,select:focus-visible,
+  [tabindex]:focus-visible,a:focus-visible{
+    outline:2px solid var(--focus-ring,#8ab4ff);outline-offset:2px;border-radius:8px}
+  /* Announced by screen readers, invisible on screen — for inputs whose surrounding copy
+     already says what they do, so a visible label would only repeat it. */
+  .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;
+    clip:rect(0 0 0 0);white-space:nowrap;border:0}
+  @media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
   .seg{display:inline-flex;border:1px solid var(--border);border-radius:10px;overflow:hidden;background:rgba(255,255,255,.02)}
   .seg button{font:inherit;font-size:12.5px;font-weight:500;border:0;background:transparent;
     color:var(--muted);padding:8px 12px;cursor:pointer;transition:color .2s,background .2s}
@@ -156,7 +167,7 @@
   .acct-hint{color:var(--muted);font-size:12px;margin-left:4px}
   .lookup input{width:100%;box-sizing:border-box;padding:11px 14px;border-radius:11px;border:1px solid var(--border);
     background:var(--surface);color:var(--ink);font-size:14px;font-family:var(--mono)}
-  .lookup input:focus{outline:none;border-color:var(--data)}
+  .lookup input:focus{border-color:var(--data)}
   .conn-list{margin-top:8px;display:flex;flex-direction:column;gap:2px}
   .conn-row{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:6px 2px;border-bottom:1px solid var(--border)}
   .conn-row .who{font-weight:600;font-size:13px}
@@ -277,6 +288,7 @@
       <div class="row">
         <button class="btn primary" id="chooseBtn">Choose file…</button>
       </div>
+      <label class="sr-only" for="paste">Paste cache JSON</label>
       <textarea class="paste" id="paste" placeholder="…or paste cache JSON here"></textarea>
       <div class="err" id="err"></div>
     </div>
@@ -289,6 +301,7 @@
     <div id="acct-section" class="hidden">
       <p class="eyebrow" style="margin-top:6px">Your accounts, cross-referenced</p>
       <div class="lookup">
+        <label class="sr-only" for="lookup">Look up a username or user ID across all your accounts</label>
         <input id="lookup" type="text" placeholder="Look up a username or user ID across all your accounts…" autocomplete="off" spellcheck="false">
       </div>
       <div id="lookup-results" class="conn-list"></div>
@@ -366,6 +379,7 @@
       <div class="card wide" style="margin-top:14px">
         <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:6px">
           <h3 style="margin:0">People with someone added</h3>
+          <label class="sr-only" for="fm-search">Filter by person, or by who they added</label>
           <input class="search" id="fm-search" type="text" placeholder="Filter by person, or by who they added…" autocomplete="off" spellcheck="false">
           <span class="hint" id="fm-meta" style="margin:0"></span>
         </div>
@@ -401,9 +415,10 @@
           <input class="search" id="full-limit" type="number" min="10" max="4000" step="10"
                  style="width:88px;margin-left:6px" value="300">
         </label>
+        <label class="sr-only" for="full-search">Find people</label>
         <input class="search" id="full-search" type="search" placeholder="Find people…"
-               style="width:170px" autocomplete="off">
-        <span class="hint" id="full-search-meta" style="margin:0"></span>
+               style="width:170px" autocomplete="off" aria-describedby="full-search-meta">
+        <span class="hint" id="full-search-meta" style="margin:0" role="status" aria-live="polite"></span>
         <span class="hint" id="full-meta" style="margin:0"></span>
         <button class="btn" id="full-groups-toggle" title="Show / hide detected friend groups">Groups</button>
         <button class="btn" id="full-close" style="margin-left:auto">Close (Esc)</button>
@@ -416,8 +431,9 @@
     <p class="eyebrow" style="margin-top:26px">Sessions</p>
     <div class="card wide">
       <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
-        <input class="search" id="search" placeholder="Search person or channel…">
-        <span class="hint" id="tbl-count" style="margin:0"></span>
+        <label class="sr-only" for="search">Search sessions by person or channel</label>
+        <input class="search" id="search" placeholder="Search person or channel…" aria-describedby="tbl-count">
+        <span class="hint" id="tbl-count" style="margin:0" role="status" aria-live="polite"></span>
       </div>
       <div class="tablewrap"><table id="tbl">
         <thead><tr>
@@ -490,7 +506,9 @@ var ptA=null, ptB=null;   // the two people the pair timeline is comparing
   $("#acct-bar").addEventListener("click",function(e){
     var b=e.target.closest&&e.target.closest(".acct-chip"); if(b) switchAccount(Number(b.getAttribute("data-i")));
   });
-  $("#lookup").addEventListener("input",function(e){ lookupQuery=e.target.value; renderLookup(); });
+  // coalesced to a frame, like the other search boxes — see onFrame()
+  var repaintLookup=onFrame(function(){ renderLookup(); });
+  $("#lookup").addEventListener("input",function(e){ lookupQuery=e.target.value; repaintLookup(); });
   var pasteEl=$("#paste");
   pasteEl.addEventListener("input",function(){
     var v=pasteEl.value.trim(); if(v.length>40) ingest(v);
@@ -2269,15 +2287,39 @@ var ptA=null, ptB=null;   // the two people the pair timeline is comparing
   }
 
   /* ---------- table ---------- */
+  /*
+   * The projected rows, cached against the session array they came from.
+   *
+   * Typing in the search box used to re-derive every row from scratch on each keystroke —
+   * a name and channel lookup per session, then a lower-casing per session, then a sort of
+   * the whole set — before showing 200 of them. On a history of any size that is the
+   * keypress-to-paint delay you can feel. None of it depends on the query, so it is done
+   * once per session set and reused; only the filter and the sort below are per keystroke,
+   * and they work on strings that are already lower-cased.
+   */
+  var tblRowsFor=null, tblRows=null;
+  function projectRows(S){
+    if(tblRowsFor===S && tblRows) return tblRows;
+    tblRows=S.map(function(s){
+      var user=uname(s.userId), channel=cname(s.channelId);
+      return { user:user, uid:s.userId, channel:channel,
+        lcUser:user.toLowerCase(), lcChannel:channel.toLowerCase(),
+        join:s.join, dur:Math.max(0,(s.leave||s.join)-s.join) };
+    });
+    tblRowsFor=S;
+    return tblRows;
+  }
   function renderTable(S){
-    var rows=S.map(function(s){ return {
-      user:uname(s.userId), uid:s.userId, channel:cname(s.channelId),
-      join:s.join, dur:Math.max(0,(s.leave||s.join)-s.join) }; });
-    var q=tableQuery.toLowerCase();
-    if(q) rows=rows.filter(function(r){return r.user.toLowerCase().indexOf(q)>=0||r.channel.toLowerCase().indexOf(q)>=0;});
+    var rows=projectRows(S);
+    var q=tableQuery.toLowerCase().trim();
+    if(q) rows=rows.filter(function(r){return r.lcUser.indexOf(q)>=0||r.lcChannel.indexOf(q)>=0;});
     var k=tableSort.k, dir=tableSort.dir;
-    rows.sort(function(a,b){ var av=a[k],bv=b[k];
-      if(typeof av==="string"){av=av.toLowerCase();bv=bv.toLowerCase();}
+    // Sorting the FILTERED set, and never in place: sorting the cache itself would leave
+    // the next render's "unsorted" rows in whatever order the last click happened to want.
+    var lc=(k==="user"||k==="channel");
+    rows=rows.slice().sort(function(a,b){
+      var av=lc?a["lc"+k.charAt(0).toUpperCase()+k.slice(1)]:a[k];
+      var bv=lc?b["lc"+k.charAt(0).toUpperCase()+k.slice(1)]:b[k];
       return av<bv?-1*dir:av>bv?1*dir:0; });
     var total=rows.length, shown=rows.slice(0,200);
     $("#tbl-count").textContent=total+" session"+(total===1?"":"s");
@@ -2296,8 +2338,26 @@ var ptA=null, ptB=null;   // the two people the pair timeline is comparing
       if(cache) renderTable(filteredSessions());
     });
   });
-  $("#search").addEventListener("input",function(e){ tableQuery=e.target.value; if(cache) renderTable(filteredSessions()); });
-  $("#fm-search").addEventListener("input",function(e){ fmQuery=e.target.value; if(cache) renderFriendMapList(); });
+  /*
+   * Search boxes repaint once per FRAME, not once per keystroke.
+   *
+   * Holding a key down, or a fast typist, otherwise queues a full filter-sort-and-rebuild
+   * per character and the browser paints every one of them. Coalescing to an animation
+   * frame does the work at the rate the screen can actually show it, which is what makes
+   * the box feel like it is keeping up.
+   */
+  function onFrame(fn){
+    var queued=false;
+    return function(){
+      if(queued) return;
+      queued=true;
+      requestAnimationFrame(function(){ queued=false; fn(); });
+    };
+  }
+  var repaintTable=onFrame(function(){ if(cache) renderTable(filteredSessions()); });
+  var repaintFm=onFrame(function(){ if(cache) renderFriendMapList(); });
+  $("#search").addEventListener("input",function(e){ tableQuery=e.target.value; repaintTable(); });
+  $("#fm-search").addEventListener("input",function(e){ fmQuery=e.target.value; repaintFm(); });
   // Only the timeline is redrawn, not the whole signals block: the four cards above are
   // about everyone and do not change when you pick a different pair.
   $("#pt-a").addEventListener("change",function(e){ ptA=e.target.value; if(sigIdx) renderPairTimeline(); });
@@ -2306,7 +2366,8 @@ var ptA=null, ptB=null;   // the two people the pair timeline is comparing
   $("#fullDossierBtn").addEventListener("click",openFullDossier);
   $("#full-close").addEventListener("click",closeFullDossier);
   $("#full-groups-toggle").addEventListener("click",function(){ $("#full-groups").classList.toggle("hidden"); });
-  $("#full-search").addEventListener("input",function(){ runFullSearch(); });
+  var repaintFullSearch=onFrame(function(){ runFullSearch(); });
+  $("#full-search").addEventListener("input",function(){ repaintFullSearch(); });
   $("#full-search").addEventListener("search",function(){ runFullSearch(); }); // the clear (×) button
   $("#full-search").addEventListener("keydown",function(ev){
     if(ev.key!=="Enter") return;

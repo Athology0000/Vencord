@@ -17,7 +17,7 @@ const fsp = require("fs/promises");
 const path = require("path");
 const crypto = require("crypto");
 const { mergeAll, mergeSnapshot, sanitize } = require("./merge");
-const { mergeAllPools, mergePool, sanitizePool, sanitizePrivate, mergePrivate, mergeFriendGraphs } = require("./pool");
+const { mergeAllPools, mergePool, mergePoolInto, sanitizePool, sanitizePrivate, mergePrivate, mergeFriendGraphs } = require("./pool");
 const auth = require("./auth");
 const pages = require("./pages");
 
@@ -222,13 +222,48 @@ async function readAllUserBlobs() {
     return out;
 }
 
+/**
+ * Fold a slice's log back into the slice and drop the log.
+ *
+ * Under the owner's push lock, and re-reading inside it, because this deletes a file that
+ * pushes are actively appending to. Compacting from a copy read outside the lock would
+ * delete every line that arrived while the slice was being written out — pushes already
+ * answered 200, which a client has no reason to ever send again.
+ *
+ * The lock is the same one POST /v1/pool takes, so a push either lands entirely before the
+ * re-read (and is written into the slice) or entirely after the rm (and starts a fresh log).
+ */
+function compact(owner, file) {
+    return withLock(`pool:${owner}`, async () => {
+        try {
+            const { pool } = await sliceWithLog(file, `${file}.log`);
+            await writeJson(file, pool);
+            await fsp.rm(`${file}.log`, { force: true });
+        } catch (e) { console.error("compaction failed:", file, e.message); }
+    });
+}
+
 async function readAllPools() {
     let names = [];
-    try { names = await fsp.readdir(POOL_DIR); } catch { return []; }
+    try { names = await fsp.readdir(POOL_DIR); } catch { names = []; }
     const out = [];
+    const seen = new Set();
     for (const n of names) {
         if (!n.endsWith(".json")) continue;
-        out.push(await readJson(path.join(POOL_DIR, n), { people: {}, calls: {}, users: {} }));
+        const file = path.join(POOL_DIR, n);
+        seen.add(file);
+        const { pool, logBytes } = await sliceWithLog(file, `${file}.log`);
+        // Fold the log back in once it has grown, so replay cost stays bounded. This is
+        // the one place that already holds the whole slice, so it is the cheap place.
+        if (logBytes > MAX_LOG_BYTES) await compact(n.slice(0, -5), file);
+        out.push(pool);
+    }
+    // A contributor whose first push has not been compacted yet has a log but no slice.
+    for (const n of names) {
+        if (!n.endsWith(".json.log")) continue;
+        const file = path.join(POOL_DIR, n.slice(0, -4));
+        if (seen.has(file)) continue;
+        out.push((await sliceWithLog(file, `${file}.log`)).pool);
     }
     return out;
 }
@@ -282,6 +317,323 @@ function send(res, code, obj) {
 }
 
 const esc = t => String(t).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+/** Send an already-serialised body, so a cached response is not re-stringified. */
+function sendRaw(res, code, body) {
+    res.writeHead(code, {
+        "Content-Type": "application/json",
+        "Content-Length": Buffer.byteLength(body),
+        "Cache-Control": "no-store"
+    });
+    res.end(body);
+}
+
+/**
+ * The pooled view, built at most once per change.
+ *
+ * This used to re-read every slice, re-merge the lot and re-serialise it on EVERY pull.
+ * At 11k people and 113k call pairs that is tens of megabytes of parsing and object
+ * building per request — and clients poll it. Two overlapping pulls were enough to
+ * exhaust the container, which the platform then killed and restarted, into a loop.
+ *
+ * The merge is a pure function of what is on disk, so it is cached as the finished
+ * STRING and thrown away whenever anything is written. Holding one copy is what makes
+ * this survivable; holding one copy per concurrent request is what did not.
+ *
+ * The TTL is a backstop, not the mechanism: if an invalidation is ever missed, the pool
+ * goes stale for a minute rather than forever.
+ */
+let mergedCache = null;        // { pooled, friends, at, builtAt, friendsStale }
+let fullBodyCache = null;      // { body, at, builtAt } — the serialised full response
+// A backstop only. The view is kept current by applying each write into it, so this is
+// what catches drift if that ever fails to happen — not the mechanism. Overridable so the
+// tests can prove the backstop actually fires without waiting ten minutes for it.
+const POOL_TTL = Number(process.env.XICORD_POOL_TTL_MS) || 10 * 60_000;
+let poolBuilding = null;       // in-flight build, shared so a burst does the work once
+/**
+ * Writes that landed while a build was reading, replayed onto its result.
+ *
+ * A build reads every slice off disk and then REPLACES the view with what it found. A push
+ * that lands after the build has already read its owner's slice is on disk but not in that
+ * result — and applying it to the live cache does not help, because the cache it patched is
+ * the object about to be thrown away (or, on a cold build, is still null and swallows the
+ * write entirely). Either way the client is told 200 and the record is not in the view.
+ *
+ * So while a build is in flight every delta is also recorded here and re-applied to the
+ * finished pool. Re-applying one that the build happened to catch is free: the merge is
+ * highest-wins, so absorbing the same record twice is the same as absorbing it once.
+ */
+let buildDeltas = null;        // array while a build is in flight, else null
+let friendsDirtyDuringBuild = false;
+
+/**
+ * Absorb a push into the cached view instead of discarding it.
+ *
+ * This used to null the caches, and clients push on the same tick they pull on — so the
+ * next pull always paid a cold rebuild: re-merge every slice into 12k people and 118k
+ * call pairs, then serialise ~50MB of it. That rebuild is what kept killing the
+ * container, and a client polling every five minutes hit it every single time.
+ *
+ * The merge is highest-wins, so applying the slice in place gives exactly what
+ * re-reading everything from disk would, at the cost of the PUSH rather than the pool.
+ * Read-your-writes still holds: the write is in the view before this returns.
+ */
+function applyPoolDelta(clean) {
+    // Queued for replay onto whatever the in-flight build produces. See buildDeltas.
+    if (buildDeltas) buildDeltas.push(clean);
+    if (mergedCache) {
+        mergePoolInto(mergedCache.pooled, clean);
+        mergedCache.at = Date.now();
+    }
+    // The serialised body no longer describes the view. Rebuilt on the next FULL pull,
+    // which is rare now that clients keep a watermark and ask for deltas.
+    fullBodyCache = null;
+}
+
+/**
+ * The friend graph is rebuilt whole rather than patched: it is ~800 entries against 118k
+ * calls, so re-merging it costs almost nothing, and it is the one section where a
+ * retraction has to be able to REMOVE a name — which an in-place highest-wins merge
+ * cannot express.
+ */
+function invalidateFriends() {
+    if (mergedCache) mergedCache.friendsStale = true;
+    // Same race as a pool delta: a build in flight is about to install a friend graph it
+    // read BEFORE this write, so the new view has to start out knowing it is behind.
+    if (buildDeltas) friendsDirtyDuringBuild = true;
+    fullBodyCache = null;
+}
+
+/** Everything, from scratch. Only on a cold start or the TTL backstop. */
+function invalidatePool() { mergedCache = null; fullBodyCache = null; }
+
+/**
+ * Each contributor's own slice, held in memory.
+ *
+ * A push used to read the whole slice back off disk, merge into a fresh copy of it and
+ * write the lot out again. The main contributor's slice IS most of the pool, so that was
+ * ~50MB parsed, ~50MB rebuilt and ~50MB serialised to absorb a few hundred pairs — once
+ * per batch of a chunked push. Keeping it in memory makes a push cost the size of the
+ * push; the disk write is debounced so a burst of batches settles into one.
+ */
+/**
+ * A push is APPENDED, not merged into the whole slice and rewritten.
+ *
+ * The container is capped at 1GB and was being OOM-killed. The old push read the owner's
+ * whole slice back off disk, built a second copy of it to merge into, and serialised the
+ * result — and the main contributor's slice IS most of the pool, so that was several
+ * hundred megabytes of live objects on top of the merged view this process already holds.
+ * Holding the slice in memory instead removed the parse and the rebuild but kept a second
+ * full copy resident, which is no better.
+ *
+ * Appending costs the size of the PUSH. It is durable before the response goes out, and
+ * replaying the log on top of the slice gives exactly the same result because the merge
+ * is highest-wins — the same property that lets a client push in batches at all.
+ */
+const poolLog = id => `${poolFile(id)}.log`;
+const counts = p => ({
+    people: Object.keys(p.people || {}).length,
+    calls: Object.keys(p.calls || {}).length,
+    users: Object.keys(p.users || {}).length
+});
+
+/**
+ * Stamp every record in a push with the moment this server accepted it.
+ *
+ * Applied AFTER sanitising, so a client cannot set its own arrival time — the stamp has to
+ * mean "when the server saw it" or a delta cannot be trusted to key on it. See newerThan().
+ */
+function stampArrival(clean, now) {
+    for (const id in clean.people) clean.people[id].sat = now;
+    for (const k in clean.calls) clean.calls[k].sat = now;
+    for (const id in clean.users || {}) clean.users[id].sat = now;
+    return clean;
+}
+// Compacted when the log passes this, so replay stays bounded. Only ever done on a cold
+// read, which already has the whole slice in hand.
+// Overridable so the tests can drive the log path at a size that does not take a
+// gigabyte of fixture to reach.
+const MAX_LOG_BYTES = Number(process.env.XICORD_MAX_LOG_BYTES) || 4 * 1024 * 1024;
+// Below this a slice is just rewritten in place, which keeps the common case to exactly
+// one file per contributor. The log only earns its complexity against a slice big enough
+// that rewriting it per push is what breaks the process.
+const SMALL_SLICE_BYTES = Number(process.env.XICORD_SMALL_SLICE_BYTES) || 2 * 1024 * 1024;
+
+/**
+ * Append one push to a slice's log, leaving the file safe to append to again.
+ *
+ * Newline-delimited on BOTH sides, which is not redundant — the two guard opposite halves
+ * of the same accident. A process killed mid-append leaves a partial line with no
+ * terminator: the LEADING newline stops the next record being glued onto that fragment
+ * into one line that cannot parse, which would drop both and lose a push already answered
+ * 200. The TRAILING newline is what makes this record whole the instant it lands, so it is
+ * never the thing a later partial write destroys. Blank lines are skipped on replay, so
+ * the cost of the pair is two bytes.
+ */
+function appendPush(logFile, clean) {
+    return fsp.appendFile(logFile, "\n" + JSON.stringify(clean) + "\n", "utf8");
+}
+
+/** Slice + everything appended since it was written. */
+async function sliceWithLog(file, logFile) {
+    const pool = await readJson(file, { people: {}, calls: {}, users: {} });
+    if (!pool.people) pool.people = {};
+    if (!pool.calls) pool.calls = {};
+    if (!pool.users) pool.users = {};
+    let text = "";
+    try { text = await fsp.readFile(logFile, "utf8"); } catch { return { pool, logBytes: 0 }; }
+    for (const line of text.split("\n")) {
+        if (!line) continue;
+        // A torn last line is possible if the process died mid-append. Everything before
+        // it still applies, and the client re-sends anything a failed sync did not bank.
+        try { mergePoolInto(pool, JSON.parse(line)); } catch { }
+    }
+    return { pool, logBytes: Buffer.byteLength(text) };
+}
+
+/** Read every slice and merge. Cached, and never run twice concurrently. */
+async function mergedView() {
+    const expired = mergedCache && Date.now() - mergedCache.builtAt >= POOL_TTL;
+    if (mergedCache && !expired) {
+        if (mergedCache.friendsStale) {
+            mergedCache.friends = mergeFriendGraphs(await readAllUserBlobs());
+            mergedCache.friendsStale = false;
+            mergedCache.at = Date.now();
+        }
+        return mergedCache;
+    }
+    if (poolBuilding) return poolBuilding;
+    // Anything written from here until the build installs its result is recorded and
+    // replayed onto it, so a push can never fall down the gap between the read and the swap.
+    const mine = buildDeltas = [];
+    friendsDirtyDuringBuild = false;
+    poolBuilding = (async () => {
+        try {
+            const pooled = mergeAllPools(await readAllPools());
+            // The friend graph is pooled too: every contributor sees only their own slice
+            // of any given person's friends, so the union is the only complete picture.
+            // Read from the private blobs rather than duplicated into the pool files, so
+            // an unfriending still retracts through the existing fresher-wins merge.
+            const friends = mergeFriendGraphs(await readAllUserBlobs());
+            // Replay before publishing, so the view is never observably missing a write
+            // that has already been acknowledged.
+            for (const d of mine) mergePoolInto(pooled, d);
+            const now = Date.now();
+            mergedCache = { pooled, friends, at: now, builtAt: now, friendsStale: friendsDirtyDuringBuild };
+            return mergedCache;
+        } finally {
+            // Only clear the buffer if it is still ours: invalidatePool() can start a
+            // newer build, and stealing its buffer would lose that build's writes instead.
+            if (buildDeltas === mine) { buildDeltas = null; friendsDirtyDuringBuild = false; }
+            poolBuilding = null;
+        }
+    })();
+    return poolBuilding;
+}
+
+/**
+ * Entries this server accepted after `since`.
+ *
+ * Keyed on `sat` — the arrival stamp — and NOT on the record's own `last`/`at`, which are
+ * a client's account of when something happened out in the world. Those two clocks answer
+ * different questions, and a delta must key on arrival: a call that ended at 12:00 and
+ * syncs at 12:07 has last=12:00, so a puller holding a 12:05 watermark would drop it from
+ * that delta and from every later one, since 12:00 never becomes newer than a watermark
+ * that only moves forward. `sat` and the watermark are both this server's clock, so the
+ * comparison is between two readings of one clock. See mergePerson() in pool.js.
+ */
+function newerThan(map, since) {
+    const out = {};
+    for (const k in map) {
+        const v = map[k];
+        const at = v && v.sat;
+        // An unstamped record is sent every time: it predates this field, and guessing
+        // "unchanged" would drop it permanently with no way for a client to notice the
+        // hole. They pick up a `sat` the next time anyone pushes them.
+        if (!(at > 0) || at > since) out[k] = v;
+    }
+    return out;
+}
+
+/**
+ * The pooled view, whole or only what has changed.
+ *
+ * A full pull is 49MB of JSON — 114k call pairs and 11k names — and clients poll it. Almost
+ * none of that changes between two pulls a few minutes apart, so `?since=<ms>` returns only
+ * the records whose own timestamp is newer.
+ *
+ * `friends` is deliberately NOT filtered. It is ~800 entries against 114k calls, so sending
+ * it whole costs almost nothing — and it is the one section where omission is ambiguous.
+ * A retracted friendship LEAVES the union rather than being restamped, so under a
+ * timestamp filter it would simply stop appearing, which is indistinguishable from
+ * "unchanged" and would keep a withdrawn name alive on every client forever. Sending the
+ * whole set, flagged complete, lets a client delete what is no longer there.
+ */
+async function pooledBody(since) {
+    if (!(since > 0)) {
+        // Buffered, not streamed, and MEASURED that way round.
+        //
+        // Streaming this looked obviously right — nothing large held in memory — and was
+        // 14x worse on the wire: the platform's edge only gzips buffered responses and
+        // does not forward `gzip` in Accept-Encoding to the origin, so a chunked reply
+        // goes out raw. 51MB in 9s streamed against 3.6MB in 1.2s buffered, measured
+        // against production both ways.
+        //
+        // The OOM this was meant to prevent came from re-merging and re-serialising per
+        // REQUEST; one shared cached string is what fixed that, not streaming. And with
+        // incremental pulls a full one is now rare.
+        // The same TTL backstop the merged view gets. Without it this cache is held only
+        // by its explicit invalidations — which is exactly the mechanism a backstop exists
+        // to cover for — so one missed invalidation would serve a stale body forever, and
+        // a full pull is the request a client makes precisely to heal drift.
+        if (fullBodyCache && Date.now() - fullBodyCache.builtAt < POOL_TTL) return fullBodyCache.body;
+        const view = await mergedView();
+        const body = JSON.stringify(payload(view.pooled, view.friends,
+            view.pooled.people, view.pooled.calls, view.pooled.users || {}, 0, view.at));
+        // stamped with the VIEW's own time, not now: the body describes the pool as it
+        // was then, and the client turns this into its watermark
+        fullBodyCache = { body, at: view.at, builtAt: Date.now() };
+        return body;
+    }
+    const view = await mergedView();
+    const { pooled, friends } = view;
+    return JSON.stringify(payload(
+        pooled, friends,
+        newerThan(pooled.people, since),
+        newerThan(pooled.calls, since),
+        newerThan(pooled.users || {}, since),
+        since, view.at
+    ));
+}
+
+
+function payload(pooled, friends, people, calls, users, since, builtAt) {
+    return {
+        people, calls, users, friends,
+        // Complete every time, so a client can drop what has vanished. See pooledBody().
+        friendsComplete: true,
+        since: since || 0,
+        // The client sends this back as its next `since`, so the watermark is the
+        // SERVER's clock throughout and a skewed client cannot skip records.
+        //
+        // It is when the data was BUILT, not when it was sent. A cached answer can be a
+        // little behind, and stamping it "now" would advance the client past records
+        // written after the build but before the send — a hole nothing would ever offer
+        // again. The extra millisecond back covers the boundary: newerThan() is a strict
+        // `>`, so a record stamped exactly at the build instant would otherwise be
+        // filtered out of the next delta too. Erring this way can only resend, never skip.
+        syncedAt: (builtAt || Date.now()) - 1,
+        counts: {
+            people: Object.keys(people).length,
+            calls: Object.keys(calls).length,
+            users: Object.keys(users).length,
+            friends: Object.keys(friends).length,
+            // what the whole pool holds, so a delta still reports the real totals
+            totalPeople: Object.keys(pooled.people).length,
+            totalCalls: Object.keys(pooled.calls).length
+        }
+    };
+}
+
 function sendHtml(res, code, doc) {
     res.writeHead(code, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" });
     res.end(doc);
@@ -329,13 +681,19 @@ const server = http.createServer(async (req, res) => {
         return sendHtml(res, 200, pages.appPage());
     }
     if (url === "/" || url === "/login") {
-        const pool = mergeAllPools(await readAllPools().catch(() => []));
+        // Through the shared cached view, never a direct re-merge. This route needs no
+        // token, and re-reading and re-merging every slice per hit — tens of MB of parsing
+        // and object building — is precisely the overlapping-full-merge that exhausted the
+        // container and had the platform restart it into a loop. Concurrent callers share
+        // one build here, and the answer is a single number off a view that is already held.
+        let people = 0;
+        try { people = Object.keys((await mergedView()).pooled.people).length; } catch { }
         let devices = 0;
         try { devices = (await fsp.readdir(POOL_DIR)).filter(f => f.endsWith(".json")).length; } catch { }
         return sendHtml(res, 200, pages.loginPage({
             configured: auth.configured(),
             devices,
-            people: Object.keys(pool.people).length
+            people
         }));
     }
 
@@ -372,25 +730,13 @@ const server = http.createServer(async (req, res) => {
 
     /* ---- v2: the shared pool ---- */
     if (url === "/v1/pool" && req.method === "GET") {
-        const pooled = mergeAllPools(await readAllPools());
-        // The friend graph is pooled too: every contributor sees only their own slice of
-        // any given person's friends, so the union is the only complete picture available.
-        // Read from the private blobs rather than duplicated into the pool files, so an
-        // unfriending still retracts through the existing fresher-wins merge.
-        const friends = mergeFriendGraphs(await readAllUserBlobs());
-        // counts go under `counts`: spreading `pooled` and then setting `people`/`calls`
-        // replaced the records with their own lengths, so a pull returned two numbers
-        return send(res, 200, {
-            ...pooled,
-            friends,
-            syncedAt: Date.now(),
-            counts: {
-                people: Object.keys(pooled.people).length,
-                calls: Object.keys(pooled.calls).length,
-                users: Object.keys(pooled.users || {}).length,
-                friends: Object.keys(friends).length
-            }
-        });
+        const q = new URLSearchParams((req.url || "").split("?")[1] || "");
+        const raw = Number(q.get("since"));
+        // Anything not a sane past timestamp means "give me everything": a NaN, a negative
+        // or a client clock running fast must degrade to a full pull, never to a silent
+        // delta that skips records.
+        const since = Number.isFinite(raw) && raw > 0 && raw <= Date.now() ? raw : 0;
+        return sendRaw(res, 200, await pooledBody(since));
     }
     if (url === "/v1/pool" && req.method === "POST") {
         if (!owner) return send(res, 403, { error: "this token is not bound to a user" });
@@ -400,16 +746,45 @@ const server = http.createServer(async (req, res) => {
             if (e && e.tooLarge) { res.setHeader("Connection", "close"); return send(res, 413, { error: "payload too large" }); }
             return send(res, 400, { error: "invalid json" });
         }
-        const clean = sanitizePool(parsed);
-        const merged = await withLock(`pool:${owner}`, async () => {
-            const next = mergePool(await readJson(poolFile(owner), { people: {}, calls: {}, users: {} }), clean);
-            await writeJson(poolFile(owner), next);
-            return next;
+        const clean = stampArrival(sanitizePool(parsed), Date.now());
+        const empty = !Object.keys(clean.people).length && !Object.keys(clean.calls).length
+            && !Object.keys(clean.users || {}).length;
+        let slice = null;
+        await withLock(`pool:${owner}`, async () => {
+            // A push with nothing in it used to cost the same full read-merge-write as a
+            // real one, and clients send them routinely when a delta finds no changes.
+            if (empty) return;
+            const file = poolFile(owner);
+            let sliceBytes = 0;
+            try { sliceBytes = (await fsp.stat(file)).size; } catch { sliceBytes = 0; }
+            if (sliceBytes <= SMALL_SLICE_BYTES) {
+                // Small enough that rewriting it costs nothing, and it keeps the on-disk
+                // shape as simple as possible: one file per contributor, always current.
+                const next = mergePool(await readJson(file, { people: {}, calls: {}, users: {} }), clean);
+                await writeJson(file, next);
+                // Free here — this path already holds the whole merged slice.
+                slice = counts(next);
+            } else {
+                // Durable before the response goes out, and the size of the push rather
+                // than the size of the slice. See appendPush().
+                await appendPush(poolLog(owner), clean);
+            }
+            // Absorbed into the merged view rather than throwing it away: the merge is
+            // highest-wins, so this costs the size of the PUSH instead of a re-merge of
+            // the whole pool on the next pull.
+            applyPoolDelta(clean);
         });
+        const view = mergedCache ? mergedCache.pooled : null;
         return send(res, 200, {
             ok: true, user: owner,
-            accepted: { people: Object.keys(clean.people).length, calls: Object.keys(clean.calls).length, users: Object.keys(clean.users || {}).length },
-            slice: { people: Object.keys(merged.people).length, calls: Object.keys(merged.calls).length, users: Object.keys(merged.users || {}).length }
+            accepted: counts(clean),
+            // This contributor's own slice, for a caller confirming its write landed.
+            // Null on the append path: counting it there would mean reading and replaying
+            // the whole slice on every push, which is the cost this route exists to avoid.
+            slice,
+            // The POOL's totals. Null until something has pulled, because nothing has
+            // built the merged view yet.
+            pool: view ? counts(view) : null
         });
     }
 
@@ -443,6 +818,9 @@ const server = http.createServer(async (req, res) => {
         const merged = await withLock(`user:${owner}`, async () => {
             const next = mergePrivate(await readJson(userFile(owner), { friends: {}, watching: [], notes: {} }), clean);
             await writeJson(userFile(owner), next);
+            // the pooled friend graph is read from these blobs, so it is stale now —
+            // only that section, which is cheap to redo on its own
+            invalidateFriends();
             return next;
         });
         return send(res, 200, {
