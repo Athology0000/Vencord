@@ -552,7 +552,16 @@ var ptA=null, ptB=null;   // the two people the pair timeline is comparing
 
   /* ---------- helpers ---------- */
   function uname(id){ var u=cache.users[id]; return (u&&u.username)||("user "+String(id).slice(0,6)); }
-  function uavatar(id){ var u=cache.users[id]; return (u&&u.avatar)||""; }
+  function uavatar(id){
+    var u=cache.users[id]; if(!u) return "";
+    var a=u.avatar||""; if(!a) return "";
+    // Old caches stored the full CDN URL; new ones store just the hash. Rebuild the URL
+    // from id+hash for a bare hash, and pass a full URL straight through so a cache written
+    // before this change still renders. Animated avatars (a_-prefixed) are gifs.
+    if(a.slice(0,4)==="http") return a;
+    var ext=a.slice(0,2)==="a_"?"gif":"webp";
+    return "https://cdn.discordapp.com/avatars/"+id+"/"+a+"."+ext+"?size=128";
+  }
   function gname(id){ var g=cache.guilds[id]; return (g&&g.name)||("server "+String(id).slice(0,6)); }
   function cname(id){
     var c=cache.channels[id];
