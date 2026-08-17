@@ -22,6 +22,7 @@ import type { ComponentType } from "react";
 import { clickable } from "./_a11y";
 import { MutualsAPI, profileUserId } from "./xicordMutuals";
 import { chunkPool, fromPool, fromPooledFriends, fromPrivate, toPool, toPrivate } from "./_sync";
+import { initAccountConfig, loadAccountConfig, swapAccountConfig } from "./_accountConfig";
 import { WatchAPI } from "./xicordOrbit";
 import { VoiceLogAPI } from "./xicordVoiceLog";
 
@@ -1615,6 +1616,9 @@ const onConnectionOpen = () => {
     const next = UserStore.getCurrentUser()?.id ?? null;
     if (next === accountId) return; // reconnect, not a switch
     console.log(`Xicord Dossier: account changed (${accountId ?? "none"} -> ${next ?? "none"}), swapping stores`);
+    // Config first, while the fields still hold the OLD account's values: this banks them
+    // and applies the incoming account's, firing the watcher plugins' own change listeners.
+    try { swapAccountConfig(accountId, next); } catch (e) { console.error("Xicord Dossier: config swap failed", e); }
     unloadAccount();
     void load().then(() => {
         if (!active) return;
@@ -4472,6 +4476,12 @@ export default definePlugin({
         active = true;
         loaded = false;
         WatchAPI.subscribe(onWatchChanged);
+        // Per-account settings config. Run early and independently of the profile load:
+        // on a same-account restart it just re-banks the fields (no change), and on a
+        // logged-in-account-changed-while-closed start it restores this account's config.
+        void loadAccountConfig().then(() => {
+            if (active) try { initAccountConfig(UserStore.getCurrentUser()?.id ?? null); } catch (e) { console.error("Xicord Dossier: config init failed", e); }
+        });
         // The store is read asynchronously now, so the seeding pass has to wait for it:
         // profiles ARE the propagation graph, and walking it empty would track nobody.
         void load().then(() => {
