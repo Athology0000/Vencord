@@ -1507,27 +1507,43 @@ async function load() {
     if (stale()) return;
     friendMap = fd && typeof fd === "object" ? fd : {};
 
-    // Names are shared across accounts, so they load once and are never swapped out.
-    if (!Object.keys(knownUsers).length) {
-        try {
-            const names = await DataStore.get(NAMES_KEY);
-            if (names && typeof names === "object") knownUsers = names;
-        } catch (e) { console.error("Xicord Dossier: name cache load failed", e); }
-    }
-    // The pool's findings are the same for every account here, so they load once too.
+    // Names, account-scoped and swapped on every switch. The old global blob is adopted
+    // into whoever is logged in now on first run, then removed — the same one-time move
+    // the profile store does above.
+    try {
+        let names = await DataStore.get(namesKeyFor(acct));
+        if (!names && acct) {
+            const unscoped = await DataStore.get(NAMES_KEY);
+            if (unscoped && typeof unscoped === "object" && Object.keys(unscoped).length) {
+                await DataStore.set(namesKeyFor(acct), unscoped);
+                await DataStore.del(NAMES_KEY);
+                names = unscoped;
+            }
+        }
+        knownUsers = names && typeof names === "object" ? names : {};
+    } catch (e) { console.error("Xicord Dossier: name cache load failed", e); knownUsers = {}; }
+    if (stale()) return;
+    // The pool's findings ARE the same for every account — kept shared on purpose — so
+    // they load once and are never swapped out.
     if (!Object.keys(pooledFriends).length) {
         try {
             const p = await DataStore.get(POOLED_KEY);
             if (p && typeof p === "object") pooledFriends = p;
         } catch (e) { console.error("Xicord Dossier: pooled friends load failed", e); }
     }
-    // Identity history rides along with the name cache: same global scope, same reason.
-    if (!Object.keys(identity).length) {
-        try {
-            const hist = await DataStore.get(IDENTITY_KEY);
-            if (hist && typeof hist === "object") identity = hist;
-        } catch (e) { console.error("Xicord Dossier: identity history load failed", e); }
-    }
+    // Identity history rides along with the name cache: same account scope, same migration.
+    try {
+        let hist = await DataStore.get(identityKeyFor(acct));
+        if (!hist && acct) {
+            const unscoped = await DataStore.get(IDENTITY_KEY);
+            if (unscoped && typeof unscoped === "object" && Object.keys(unscoped).length) {
+                await DataStore.set(identityKeyFor(acct), unscoped);
+                await DataStore.del(IDENTITY_KEY);
+                hist = unscoped;
+            }
+        }
+        identity = hist && typeof hist === "object" ? hist : {};
+    } catch (e) { console.error("Xicord Dossier: identity history load failed", e); identity = {}; }
 
     if (stale()) return;
     try {
@@ -1560,8 +1576,14 @@ function unloadAccount() {
     dirty = true;
     flush(); // still keyed to the OLD account — see flush()
     flushFriends(); // ditto — see flushFriends()
+    flushNames(); // names are per-account now; bank them before the swap clears them
+    flushIdentity(); // ditto — a witnessed rename belongs to the account that saw it
     loaded = false;
     profiles = {};
+    // Per-account now, so they are emptied on the way out and reloaded for the incoming
+    // account. The pool cache is deliberately NOT cleared here — it is shared.
+    knownUsers = {};
+    identity = {};
     // Cleared with the profiles they describe. Carrying the outgoing account's watermark
     // into the incoming one would tell the server "I already have everything up to T"
     // about a store that holds none of it, and those records are never offered again.
@@ -1969,9 +1991,12 @@ let resolvePump: object | null = null;
 // UserStore is memory-only and starts EMPTY every launch, and the cache snapshot builds
 // its name map straight from it — so every name the resolver ever learned was thrown
 // away on restart and the dashboard fell back to "user 1a2b3c" for thousands of people.
-// Names are kept on disk here instead. Not account-scoped: a username is the same
-// whoever happens to be looking at it.
+// Names are kept on disk here. Account-scoped like everything else: switching to another
+// account gives it its own clean view rather than a name cache full of people the other
+// account met. The shared pool still carries names between accounts, so this stays useful
+// without being mixed.
 const NAMES_KEY = "XicordResolvedUsers";
+const namesKeyFor = (id: string | null) => (id ? `${NAMES_KEY}:${id}` : NAMES_KEY);
 interface KnownUser { username: string; avatar: string; banner?: string; at: number; }
 let knownUsers: Record<string, KnownUser> = {};
 
@@ -1983,10 +2008,12 @@ let knownUsers: Record<string, KnownUser> = {};
 // people change name and picture precisely to shed the history attached to them, and
 // this is the only place that history survives.
 //
-// Global, not per-account, for the same reason the name cache is: a rename is a fact
-// about the person, not about which of your accounts happened to witness it.
+// Account-scoped like the name cache it rides beside: this account keeps the identity
+// changes it witnessed, and switching accounts does not pour one account's sightings into
+// another's.
 // ---------------------------------------------------------------------------
 const IDENTITY_KEY = "XicordIdentityHistory";
+const identityKeyFor = (id: string | null) => (id ? `${IDENTITY_KEY}:${id}` : IDENTITY_KEY);
 interface IdentityEntry { username: string; avatar?: string; banner?: string; from: number; until: number; }
 type IdentityHistory = Record<string, IdentityEntry[]>;
 let identity: IdentityHistory = {};
@@ -2081,10 +2108,14 @@ function scheduleIdentityFlush() {
 }
 function flushIdentity() {
     if (identityTimer != null) { clearTimeout(identityTimer); identityTimer = null; }
-    if (!identityDirty) return;
+    if (!identityDirty || !loaded) return;
     identityDirty = false;
-    void DataStore.set(IDENTITY_KEY, identity).catch(e => {
-        identityDirty = true;
+    // Capture key AND object up front: an account switch replaces both mid-write, and the
+    // outgoing account's history must not land under the incoming account's key.
+    const key = identityKeyFor(accountId);
+    const writing = identity;
+    void DataStore.set(key, writing).catch(e => {
+        if (writing === identity) identityDirty = true;
         console.error("Xicord Dossier: identity history save failed", e);
     });
 }
@@ -2098,10 +2129,12 @@ function scheduleNamesFlush() {
 }
 function flushNames() {
     if (namesTimer != null) { clearTimeout(namesTimer); namesTimer = null; }
-    if (!namesDirty) return;
+    if (!namesDirty || !loaded) return;
     namesDirty = false;
-    void DataStore.set(NAMES_KEY, knownUsers).catch(e => {
-        namesDirty = true;
+    const key = namesKeyFor(accountId);
+    const writing = knownUsers;
+    void DataStore.set(key, writing).catch(e => {
+        if (writing === knownUsers) namesDirty = true;
         console.error("Xicord Dossier: name cache save failed", e);
     });
 }
