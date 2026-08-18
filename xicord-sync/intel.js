@@ -80,6 +80,37 @@ function sharedServers(ga, gb) {
 }
 
 // ---------------------------------------------------------------------------
+// Calls categorised by the server they happened in
+// ---------------------------------------------------------------------------
+// A call carries the guild(s) it took place in, so the same pool that answers "who does
+// this person call" also answers "what happens in this server". Aggregate per guild: how
+// many relationships play out there, the total voice time, and the distinct people. The
+// per-server list of pairs is NOT materialised here (it would be huge); a server dossier
+// walks the calls once on demand for the one server asked about.
+function serverCalls(calls) {
+    const out = {};
+    for (const k in calls) {
+        const c = calls[k]; const i = k.indexOf("|"); if (i < 0) continue;
+        const a = k.slice(0, i), b = k.slice(i + 1);
+        for (const g of (c.guilds || [])) {
+            const s = out[g] || (out[g] = { pairs: 0, ms: 0, count: 0, people: new Set() });
+            s.pairs++; s.ms += c.ms || 0; s.count += c.count || 0; s.people.add(a); s.people.add(b);
+        }
+    }
+    return out;
+}
+// The pairs whose calls happened in one server, walked on demand. Returns [a, b, rec].
+function callsInServer(calls, guild) {
+    const out = [];
+    for (const k in calls) {
+        const c = calls[k]; if (!c.guilds || c.guilds.indexOf(guild) < 0) continue;
+        const i = k.indexOf("|"); if (i < 0) continue;
+        out.push([k.slice(0, i), k.slice(i + 1), c]);
+    }
+    return out;
+}
+
+// ---------------------------------------------------------------------------
 // Relationship strength - a single 0..100 closeness score
 // ---------------------------------------------------------------------------
 // Interpretable on purpose: mostly time-together (log-scaled against the busiest pair on
@@ -158,10 +189,11 @@ function buildIntel(P, idx, friends) {
     const cen = centrality(idx, friends);
     const cl = clusters(idx.by, { maxIter: 6 });
     const members = serverIndex(P.people);
-    return { centrality: cen, cluster: cl.label, clusterSize: cl.size, guildMembers: members, maxMs };
+    const callServers = serverCalls(P.calls);
+    return { centrality: cen, cluster: cl.label, clusterSize: cl.size, guildMembers: members, callServers, maxMs };
 }
 
 module.exports = {
     centrality, clusters, serverIndex, topServers, sharedServers,
-    closeness, activeHours, altScore, sharedConnLabels, buildIntel
+    serverCalls, callsInServer, closeness, activeHours, altScore, sharedConnLabels, buildIntel
 };

@@ -93,12 +93,12 @@ function extractConst(name) {
     }
     throw new Error(`unbalanced const ${name}`);
 }
-const fns = ["profileFor", "channelOccupants", "reconcile", "scanForMutuals", "guildMemberIds", "sweepGuildMembers"]
+const fns = ["profileFor", "tagCallGuild", "channelOccupants", "reconcile", "scanForMutuals", "guildMemberIds", "sweepGuildMembers"]
     .map(extract).concat([extractConst("onGuildMemberAdd")]).join("\n");
 const api = new Function(
     "ChannelStore", "VoiceStateStore", "GuildMemberStore", "SelectedGuildStore", "UserStore",
     "MutualsAPI", "Toasts", "settings",
-    `${preamble}\n${fns}
+    `${preamble}\nconst MAX_CALL_GUILDS = 8;\n${fns}
      return { channelOccupants, reconcile, sweepGuildMembers, onGuildMemberAdd,
               getProfiles: () => profiles, getOpen: () => open, getSwept: () => sweptGuilds,
               setActive: v => { active = v; } };`
@@ -145,6 +145,9 @@ ok("companion F was counted despite the channel being locked",
     (api.getProfiles()["T"]?.companions?.F?.count ?? 0) === 1,
     JSON.stringify(api.getProfiles()["T"]));
 ok("the locked guild is recorded on the profile", !!api.getProfiles()["T"]?.guilds?.g1);
+ok("the call is categorised by the server it happened in",
+    (api.getProfiles()["T"]?.companions?.F?.guilds || []).includes("g1"),
+    JSON.stringify(api.getProfiles()["T"]?.companions?.F));
 // old code path: guildId came only from ChannelStore, so this whole call was skipped
 
 console.log("\n-- reconcile with NO guild anywhere is treated as non-guild (DM/group call) --");

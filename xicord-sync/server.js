@@ -869,7 +869,7 @@ const server = http.createServer(async (req, res) => {
         return sendRaw(res, 200, await pooledBody(since));
     }
     // --- lightweight, pre-resolved lookups so the console never pulls the whole pool ---
-    if ((url === "/v1/profile" || url === "/v1/summary" || url === "/v1/graph") && req.method === "GET") {
+    if ((url === "/v1/profile" || url === "/v1/summary" || url === "/v1/graph" || url === "/v1/servers" || url === "/v1/server") && req.method === "GET") {
         if (maintenanceOn()) return send(res, 503, { error: "maintenance", retry: 60 });
         const view = await mergedView();
         const P = view.pooled;
@@ -937,6 +937,30 @@ const server = http.createServer(async (req, res) => {
                     servers: Object.keys(IN.guildMembers).filter(g => IN.guildMembers[g].length >= 2).length
                 }
             });
+        }
+
+        // Servers ranked by the relationships that play out inside them - calls categorised
+        // by where they happened.
+        if (url === "/v1/servers") {
+            const cs = IN.callServers;
+            const list = Object.keys(cs).map(g => ({ guild: g, pairs: cs[g].pairs, ms: cs[g].ms, count: cs[g].count, people: cs[g].people.size }))
+                .filter(s => s.pairs >= 1).sort((a, b) => b.ms - a.ms).slice(0, 60)
+                .map(s => { const top = [...IN.callServers[s.guild].people].sort((a, b) => (IN.centrality[b] || 0) - (IN.centrality[a] || 0)).slice(0, 4).map(uinfo); return { ...s, sample: top }; });
+            return send(res, 200, { servers: list, total: Object.keys(cs).length });
+        }
+
+        // One server's dossier: the relationships whose calls happened in it, ranked, plus
+        // its most-central members.
+        if (url === "/v1/server") {
+            const gq = new URLSearchParams((req.url || "").split("?")[1] || "");
+            const g = (gq.get("guild") || "").replace(/[^0-9]/g, "");
+            if (!/^\d{5,25}$/.test(g)) return send(res, 400, { error: "bad guild" });
+            const now = Date.now();
+            const pairs = intel.callsInServer(P.calls, g).sort((x, y) => (y[2].ms || 0) - (x[2].ms || 0));
+            const relationships = pairs.slice(0, 100).map(function (t) { return { a: uinfo(t[0]), b: uinfo(t[1]), ms: t[2].ms || 0, count: t[2].count || 0, last: t[2].last || 0, score: intel.closeness(t[2], now, IN.maxMs) }; });
+            const cs = IN.callServers[g];
+            const members = (cs ? [...cs.people] : []).sort((a, b) => (IN.centrality[b] || 0) - (IN.centrality[a] || 0)).slice(0, 30).map(uinfo);
+            return send(res, 200, { guild: g, pairs: cs ? cs.pairs : relationships.length, ms: cs ? cs.ms : 0, count: cs ? cs.count : 0, people: cs ? cs.people.size : 0, relationships, members });
         }
 
         // /v1/profile — resolve q (id: / dn: / name: / @ / tag: / auto), then assemble

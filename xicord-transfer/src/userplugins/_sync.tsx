@@ -109,7 +109,11 @@ export function toPool(
             cur.ms = Math.max(cur.ms, rec?.ms ?? 0);
             cur.count = Math.max(cur.count, rec?.count ?? 0);
             cur.last = Math.max(cur.last, rec?.last ?? 0);
-            for (const g of guilds) if (!cur.guilds.includes(g)) cur.guilds.push(g);
+            // A call's guilds are where it ACTUALLY happened (the VC's server), so the pool
+            // can categorise relationships by server. Older records predating that capture
+            // fall back to the pair's shared memberships, which is the best proxy we have.
+            const callGuilds = (rec?.guilds && rec.guilds.length) ? rec.guilds : guilds;
+            for (const g of callGuilds) if (isId(g) && !cur.guilds.includes(g)) cur.guilds.push(g);
         }
     }
     // only the names of people actually in this payload, so a delta stays small

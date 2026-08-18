@@ -86,6 +86,22 @@ const friends = { H: { friends: ["A", "B", "Z"] } };
     ok(shared.score > 0 && shared.reasons.some(r => /shared contacts/.test(r)), "shared-contacts-never-together scores");
 }
 
+/* calls categorised by the server they happened in */
+{
+    const calls = { "A|B": { ms: 100, count: 2, guilds: ["g1"] }, "A|C": { ms: 50, count: 1, guilds: ["g1", "g2"] }, "D|E": { ms: 10, count: 1, guilds: [] } };
+    const cs = I.serverCalls(calls);
+    eq(cs.g1.pairs, 2, "g1 has two pairs");
+    eq(cs.g1.ms, 150, "g1 total voice time");
+    eq(cs.g1.people.size, 3, "g1 distinct people A,B,C");
+    ok(cs.g2 && cs.g2.pairs === 1, "g2 has the one pair whose call was there too");
+    ok(Object.keys(cs).length === 2, "a call with no guild is not categorised anywhere");
+    const inG1 = I.callsInServer(calls, "g1");
+    eq(inG1.length, 2, "two pairs walked for g1");
+    const inG2 = I.callsInServer(calls, "g2");
+    eq(inG2.length, 1, "one pair for g2");
+    eq(inG2[0][0] + "|" + inG2[0][1], "A|C", "the g2 pair is A|C");
+}
+
 /* buildIntel bundles it */
 {
     const P = { calls: { "A|H": call(100, 5, 9), "X|Y": call(500, 20, 9) }, people: { A: { guilds: ["g1"] }, H: { guilds: ["g1"] } } };

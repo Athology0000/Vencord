@@ -146,7 +146,10 @@ const settings = definePluginSettings({
     },
 });
 
-interface Companion { count: number; ms: number; last: number; }
+// `guilds` = the servers this pair's voice calls actually HAPPENED in (the VC's guild),
+// so a relationship can be categorised by where it plays out. Distinct from a person's
+// server memberships, which say only where they COULD be found. Capped and deduped.
+interface Companion { count: number; ms: number; last: number; guilds?: string[]; }
 interface GameStat { ms: number; last: number; sessions: number; }
 // A point-in-time capture of the richer profile fields Discord returns only when you
 // open someone: their About Me, pronouns, linked accounts, badge flags and Nitro/boost
@@ -1642,6 +1645,7 @@ function unloadAccount() {
             const rec = p.companions[c] ?? (p.companions[c] = { count: 0, ms: 0, last: 0 });
             rec.ms += Math.max(0, now - since);
             rec.last = now;
+            tagCallGuild(rec, o.guildId);
         }
         p.updated = now;
     }
@@ -1750,6 +1754,18 @@ function profileFor(id: string): Profile {
     let p = profiles[id];
     if (!p) { p = profiles[id] = { companions: {}, guilds: {}, updated: 0, firstSeen: Date.now() }; }
     return p;
+}
+
+// Record the server a call happened in onto the companion, so calls can be categorised by
+// where they took place. Deduped and capped to the few most recent servers per pair.
+const MAX_CALL_GUILDS = 8;
+function tagCallGuild(rec: Companion, g?: string | null) {
+    if (!g) return;
+    const list = rec.guilds ?? (rec.guilds = []);
+    const at = list.indexOf(g);
+    if (at !== -1) { if (at !== list.length - 1) { list.splice(at, 1); list.push(g); } return; }
+    list.push(g);
+    if (list.length > MAX_CALL_GUILDS) list.splice(0, list.length - MAX_CALL_GUILDS);
 }
 
 // A timestamp Discord may hand back as ms, a number, or an ISO string. 0 means "unknown".
@@ -2008,6 +2024,7 @@ function reconcile(targetId: string) {
             const rec = p.companions[c] ?? (p.companions[c] = { count: 0, ms: 0, last: 0 });
             rec.ms += Math.max(0, now - since);
             rec.last = now;
+            tagCallGuild(rec, o.guildId);
         }
         p.updated = now;
         scheduleFlush();
@@ -2044,6 +2061,7 @@ function reconcile(targetId: string) {
             if (isNew) noteCallGraphGrew();
             rec.count += 1;
             rec.last = now;
+            tagCallGuild(rec, guildId);
             p.guilds[guildId!] = (p.guilds[guildId!] || 0) + 1;
             p.updated = now;
             if (isNew && settings.store.announceNew && c !== me) {
@@ -2059,6 +2077,7 @@ function reconcile(targetId: string) {
             const rec = p.companions[c] ?? (p.companions[c] = { count: 0, ms: 0, last: 0 });
             rec.ms += Math.max(0, now - since);
             rec.last = now;
+            tagCallGuild(rec, o.guildId);
             o.companions.delete(c);
         }
     }
