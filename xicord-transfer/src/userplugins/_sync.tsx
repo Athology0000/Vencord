@@ -25,7 +25,11 @@ WITHOUT WARRANTY OF ANY KIND.
 
 export interface PoolCall { ms: number; count: number; last: number; guilds: string[]; }
 export interface PoolPerson { guilds: string[]; first: number; last: number; }
-export interface PoolUser { username: string; avatar: string; at: number; }
+// `about` is the richer opened-profile capture (bio, pronouns, connections, badges,
+// Nitro/boost, banner, decoration) — see the About type in xicordDossier. Optional and
+// sparse: it rides on a user record only for people whose profile was actually opened.
+export interface PoolAbout { bio?: string; pronouns?: string; conns?: Array<{ t: string; n: string; id?: string; v?: 1; }>; flags?: number; premium?: number; since?: number; boost?: number; banner?: string; deco?: string; at: number; }
+export interface PoolUser { username: string; avatar: string; at: number; about?: PoolAbout; }
 /** One observed voice transition. `ch`/`old` are channel ids; either may be null. */
 export interface PoolVoiceEvent { act: "joined" | "left" | "moved"; ch: string | null; old: string | null; at: number; }
 export interface PoolVoicePerson { events: PoolVoiceEvent[]; last: number; }
@@ -112,7 +116,13 @@ export function toPool(
     const users: Record<string, PoolUser> = {};
     for (const id of Object.keys(people)) {
         const n = names[id];
-        if (n?.username) users[id] = { username: n.username, avatar: n.avatar || "", at: n.at ?? 0 };
+        if (!n?.username) continue;
+        const rec: PoolUser = { username: n.username, avatar: n.avatar || "", at: n.at ?? 0 };
+        // Carry the opened-profile capture if we have one, so the pooled dossier can show
+        // this person's bio / pronouns / connections, not just their name and call graph.
+        const about = profiles?.[id]?.about;
+        if (about && typeof about === "object") rec.about = about;
+        users[id] = rec;
     }
     return { people, calls, users };
 }

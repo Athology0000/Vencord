@@ -82,6 +82,12 @@ function mergeCall(a = {}, b = {}) {
  * here. The fresher resolution wins, which is how a rename eventually reaches everyone.
  * Without this the shared view is nothing but snowflakes.
  */
+/** The fresher About by its OWN clock, or whichever side has one. See mergeUser. */
+function pickAbout(x, y) {
+    if (!x) return y || null;
+    if (!y) return x;
+    return (y.at ?? 0) >= (x.at ?? 0) ? y : x;
+}
 function mergeUser(a, b) {
     if (!a) return b;
     if (!b) return a;
@@ -89,7 +95,14 @@ function mergeUser(a, b) {
     // The name that wins is the fresher RESOLUTION; the arrival stamp is the later of the
     // two regardless, or re-sending an old name would hide the record from deltas.
     const sat = maxNum(a.sat, b.sat);
-    return sat === (win.sat ?? 0) ? win : { ...win, sat };
+    // About carries its OWN timestamp and is chosen INDEPENDENTLY of the name: a name gets
+    // re-resolved without re-opening the profile, and an About re-captured without the name
+    // changing. Tying them would let a name-only update silently drop a bio. So merge the
+    // two separately and reunite them.
+    const about = pickAbout(a.about, b.about);
+    const out = sat === (win.sat ?? 0) ? { ...win } : { ...win, sat };
+    if (about) out.about = about; else delete out.about;
+    return out;
 }
 
 // ---------------------------------------------------------------------------
@@ -220,6 +233,44 @@ function mergePoolInto(base, delta) {
     return base;
 }
 
+/**
+ * The opened-profile capture, re-validated on the way in. Every field is bounded exactly
+ * as the client bounds it, because a bio is user-controlled free text and a third-party or
+ * older client cannot be trusted to have capped it. Returns null when nothing survives, so
+ * an empty About is never stored.
+ */
+function sanitizeAbout(a) {
+    if (!a || typeof a !== "object") return null;
+    const out = {};
+    if (typeof a.bio === "string" && a.bio.trim()) out.bio = a.bio.slice(0, 600);
+    if (typeof a.pronouns === "string" && a.pronouns.trim()) out.pronouns = a.pronouns.slice(0, 40);
+    if (Array.isArray(a.conns) && a.conns.length) {
+        const conns = [];
+        for (const c of a.conns) {
+            if (!c || typeof c !== "object") continue;
+            const t = typeof c.t === "string" ? c.t.slice(0, 32) : "";
+            const n = typeof c.n === "string" ? c.n.slice(0, 100) : "";
+            if (!t || !n) continue;
+            const rec = { t, n };
+            if (typeof c.id === "string" && c.id) rec.id = c.id.slice(0, 100);
+            if (c.v === 1 || c.v === true) rec.v = 1;
+            conns.push(rec);
+            if (conns.length >= 12) break;
+        }
+        if (conns.length) out.conns = conns;
+    }
+    const flags = num(a.flags); if (flags) out.flags = flags;
+    const premium = num(a.premium); if (premium) out.premium = premium;
+    const since = num(a.since); if (since && since > 0) out.since = since;
+    const boost = num(a.boost); if (boost && boost > 0) out.boost = boost;
+    if (typeof a.banner === "string" && a.banner) out.banner = a.banner.slice(0, 64);
+    if (typeof a.deco === "string" && a.deco) out.deco = a.deco.slice(0, 64);
+    const has = out.bio || out.pronouns || out.conns || out.flags || out.premium || out.since || out.boost || out.banner || out.deco;
+    if (!has) return null;
+    const at = num(a.at); out.at = at && at > 0 ? at : 0;
+    return out;
+}
+
 /** Reject anything that is not the shape we store. */
 function sanitizePool(payload) {
     const out = { people: {}, calls: {}, users: {}, voice: {} };
@@ -258,7 +309,10 @@ function sanitizePool(payload) {
         const username = typeof u.username === "string" ? u.username.slice(0, 128) : "";
         if (!username) continue;
         const avatar = typeof u.avatar === "string" && /^https?:\/\//.test(u.avatar) ? u.avatar.slice(0, 512) : "";
-        out.users[id] = { username, avatar, at: maxNum(u.at, 0) };
+        const rec = { username, avatar, at: maxNum(u.at, 0) };
+        const about = sanitizeAbout(u.about);
+        if (about) rec.about = about;
+        out.users[id] = rec;
     }
     for (const [id, v] of Object.entries(payload.voice || {})) {
         if (!isSnowflake(id) || !v || typeof v !== "object") continue;
@@ -412,7 +466,7 @@ function mergeFriendGraphs(blobs) {
 }
 
 module.exports = {
-    mergePool, mergeAllPools, mergePoolInto, mergeCall, mergePerson, mergeUser, sanitizePool,
+    mergePool, mergeAllPools, mergePoolInto, mergeCall, mergePerson, mergeUser, sanitizePool, sanitizeAbout, pickAbout,
     sanitizePrivate, mergePrivate, mergeFriendGraphs, stampRetractions,
     mergeVoicePerson, cleanVoiceEvent, voiceKey, VOICE_BUCKET_MS, MAX_VOICE_EVENTS,
     pairKey, isSnowflake, maxNum, minStamp

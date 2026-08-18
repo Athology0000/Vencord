@@ -886,6 +886,10 @@ const server = http.createServer(async (req, res) => {
         }
         const idx = view.__idx;
         const uinfo = id => { const u = P.users[id] || {}; return { id, username: u.username || null, avatar: u.avatar || null }; };
+        // Account creation is a pure function of the snowflake (top 42 bits are ms since the
+        // Discord epoch), so it is DERIVED here rather than stored -- zero bytes in the pool,
+        // and it doubles as alt-detection: a brand-new account in someone's orbit stands out.
+        const createdAt = sid => { try { return Number((BigInt(sid) >> 22n) + 1420070400000n); } catch { return 0; } };
 
         if (url === "/v1/summary") {
             const people = Object.keys(P.people).length || Object.keys(P.users).length;
@@ -937,7 +941,7 @@ const server = http.createServer(async (req, res) => {
         const mine = {}; for (const o in comp) mine[o] = 1; const score = {};
         for (const o in comp) { const their = idx.by[o] || {}; for (const x in their) if (x !== id && mine[x]) score[x] = (score[x] || 0) + 1; }
         const alts = Object.keys(score).filter(o => o !== id && !comp[o] && score[o] >= 3).map(o => ({ ...uinfo(o), shared: score[o] })).sort((a, b) => b.shared - a.shared).slice(0, 8);
-        return send(res, 200, { ...uinfo(id), guilds: person.guilds || [], first: person.first || 0, last: person.last || 0, totalMs: idx.ms[id] || 0, companionCount: Object.keys(comp).length, friendCount: fr.length, companions, voice, friends, alts });
+        return send(res, 200, { ...uinfo(id), about: (P.users[id] && P.users[id].about) || null, created: createdAt(id), guilds: person.guilds || [], first: person.first || 0, last: person.last || 0, totalMs: idx.ms[id] || 0, companionCount: Object.keys(comp).length, friendCount: fr.length, companions, voice, friends, alts });
     }
 
     if (url === "/v1/pool" && req.method === "POST") {

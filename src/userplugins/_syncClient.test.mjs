@@ -60,6 +60,18 @@ ok("the stale profile is skipped", !p.calls[pairKey(A, B)], Object.keys(p.calls)
 ok("the changed one is sent", !!p.calls[pairKey(C, B)], Object.keys(p.calls).join(","));
 ok("a full re-sync (since 0) carries both", Object.keys(toPool(two, [ME], 0).calls).length === 2);
 
+console.log("\n-- opened-profile About rides on the user record --");
+{
+    const names = { [A]: { username: "alice", avatar: "http://a", at: 10 } };
+    const withAbout = { [A]: { ...prof({ [B]: comp(1, 65000, 90) }), about: { bio: "hi there", pronouns: "she/her", flags: 64, at: 77 } } };
+    const pa = toPool(withAbout, [ME], 0, names);
+    ok("the user record exists", !!pa.users[A], Object.keys(pa.users).join(","));
+    ok("and carries the About capture", !!(pa.users[A].about && pa.users[A].about.bio === "hi there"));
+    const noAbout = { [A]: prof({ [B]: comp(1, 65000, 90) }) };
+    const pn = toPool(noAbout, [ME], 0, names);
+    ok("a user with no About has none", !!pn.users[A] && pn.users[A].about === undefined);
+}
+
 console.log("\n-- the wire back into local profiles --");
 let local = {};
 const pool = {

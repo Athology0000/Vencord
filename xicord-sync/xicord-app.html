@@ -303,13 +303,48 @@ function renderMatches(list){
   list.forEach(function(o){ out.push('<div class="row" style="justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--line-soft)">'+personRow(o)+'<span class="chip">'+esc(o.id)+'</span></div>'); });
   out.push('</div>'); document.getElementById("q-out").innerHTML=out.join("");
 }
+// Decode Discord's public_flags bitfield into the badges worth showing.
+function badgeList(flags){
+  if(!flags) return [];
+  var B=[[1,"Staff"],[2,"Partner"],[4,"HypeSquad"],[8,"Bug Hunter"],[64,"Bravery"],[128,"Brilliance"],[256,"Balance"],[512,"Early Supporter"],[16384,"Bug Hunter 2"],[131072,"Early Dev"],[262144,"Mod Programs"],[4194304,"Active Dev"]];
+  var out=[]; B.forEach(function(b){ if((flags & b[0])===b[0]) out.push(b[1]); }); return out;
+}
+function nitroName(t){ return t===1?"Nitro Classic":t===2?"Nitro":t===3?"Nitro Basic":""; }
+// Link a connected account to its platform where the handle/id makes that possible.
+function connUrl(c){
+  var t=(c.t||"").toLowerCase(), n=encodeURIComponent(c.n||""), id=encodeURIComponent(c.id||"");
+  if(t==="github") return "https://github.com/"+n;
+  if(t==="twitch") return "https://twitch.tv/"+n;
+  if(t==="reddit") return "https://reddit.com/u/"+n;
+  if(t==="twitter"||t==="x") return "https://x.com/"+n;
+  if(t==="spotify"&&c.id) return "https://open.spotify.com/user/"+id;
+  if(t==="steam"&&c.id) return "https://steamcommunity.com/profiles/"+id;
+  if(t==="youtube"&&c.id) return "https://youtube.com/channel/"+id;
+  if(t==="domain") return "https://"+n;
+  return "";
+}
 function renderProfile(p){
   var out=[];
   out.push('<div class="card prof-hero"><i class="corner tl"></i><i class="corner br"></i>'+
     (avatarOf(p,128)?'<img class="av" loading="lazy" decoding="async" src="'+esc(avatarOf(p,128))+'">':'<span class="av"></span>')+
-    '<div><div class="nm">'+esc(nameOf(p))+'</div><div class="id">'+esc(p.id)+'</div>'+
+    '<div><div class="nm">'+esc(nameOf(p))+(p.about&&p.about.pronouns?' <span class="faint" style="font-size:12px;font-weight:400">'+esc(p.about.pronouns)+'</span>':'')+'</div><div class="id">'+esc(p.id)+'</div>'+
     '<div class="meta"><span>'+(p.companionCount||0)+' companions</span><span>'+fmtDur(p.totalMs)+' in voice</span>'+
-    '<span>'+((p.guilds||[]).length)+' servers</span>'+(p.first?'<span>first seen '+ago(p.first)+'</span>':'')+(p.last?'<span>last '+ago(p.last)+'</span>':'')+'</div></div></div>');
+    '<span>'+((p.guilds||[]).length)+' servers</span>'+(p.created?'<span>created '+ago(p.created)+'</span>':'')+(p.first?'<span>first seen '+ago(p.first)+'</span>':'')+(p.last?'<span>last '+ago(p.last)+'</span>':'')+'</div></div></div>');
+
+  // The richer opened-profile dossier: bio, pronouns, badges, Nitro, linked accounts.
+  var ab=p.about||null; var badges=ab?badgeList(ab.flags):[]; var nitro=ab?nitroName(ab.premium):"";
+  if(ab && (ab.bio||(ab.conns&&ab.conns.length)||badges.length||nitro||ab.boost)){
+    out.push('<div class="card panel" style="margin-top:16px"><i class="corner tl"></i><i class="corner br"></i><h3>Profile'+(ab.at?' <span class="tag">captured '+ago(ab.at)+'</span>':'')+'</h3>');
+    if(ab.bio) out.push('<div class="faint" style="margin-top:4px;white-space:pre-wrap;line-height:1.5;max-width:72ch">'+esc(ab.bio)+'</div>');
+    if(badges.length||nitro||ab.boost){ out.push('<div class="row" style="gap:6px;flex-wrap:wrap;margin-top:10px">'+
+      (nitro?'<span class="badge alt">'+esc(nitro)+'</span>':'')+
+      (ab.boost?'<span class="badge alt">Boosting since '+esc(ago(ab.boost))+'</span>':'')+
+      badges.map(function(b){return '<span class="badge">'+esc(b)+'</span>';}).join("")+'</div>'); }
+    if(ab.conns&&ab.conns.length){ out.push('<div class="row" style="gap:7px;flex-wrap:wrap;margin-top:10px">');
+      ab.conns.forEach(function(c){ var u=connUrl(c); var label=esc(c.t)+' &middot; '+esc(c.n)+(c.v?' ✓':''); out.push(u?'<a class="chip" href="'+esc(u)+'" target="_blank" rel="noopener" style="cursor:pointer">'+label+'</a>':'<span class="chip">'+label+'</span>'); });
+      out.push('</div>'); }
+    out.push('</div>');
+  }
 
   out.push('<div class="grid2" style="margin-top:16px">');
   var comps=p.companions||[]; var max=comps.length?comps[0].ms:1;
