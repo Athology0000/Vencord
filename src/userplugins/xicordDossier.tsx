@@ -117,6 +117,16 @@ const settings = definePluginSettings({
         stickToMarkers: true,
         onChange() { trackedDirty = true; }
     },
+    syncEverySec: {
+        description: "How often to sync with the pool, in seconds. Lower = quicker updates. Default 90 (was 300).",
+        type: OptionType.NUMBER,
+        default: 90,
+    },
+    minCallSec: {
+        description: "Shortest call, in seconds, that is shared to the pool. Lower = more calls pooled (briefer overlaps included). Default 30 (was 60). Keep the sync server's XICORD_POOL_MIN_MS in step.",
+        type: OptionType.NUMBER,
+        default: 30,
+    },
     syncUrl: {
         description: "Xicord Sync server. Your dossier is uploaded here so other machines — and your phone — see the same data",
         type: OptionType.STRING,
@@ -1325,8 +1335,10 @@ async function syncOnce(full = false) {
         // server view reads as names, not raw ids. Only the guilds a push references are
         // looked up (inside toPool), and an unknown one just stays an id server-side.
         const guildName = (gid: string) => { try { return (GuildStore as any).getGuild?.(gid)?.name || ""; } catch { return ""; } };
+        // Shortest call worth sharing (a setting now — lower pools more calls).
+        const minCallMs = Math.max(1, Number(settings.store.minCallSec) || 30) * 1000;
         // hand over the names we have resolved, so the shared view is readable
-        const out = toPool(profiles, mine, since, knownUsers as any, guildName);
+        const out = toPool(profiles, mine, since, knownUsers as any, guildName, minCallMs);
         // The Voice Log keeps its own watermark: its events are stamped when they were
         // OBSERVED, which is a different clock from the profile store's `updated`, and
         // sharing one would silently skip whichever of the two moved less.
@@ -4742,9 +4754,12 @@ export default definePlugin({
             setTimeout(autoSweepTick, 18000);
             autoSweepTimer = setInterval(autoSweepTick, AUTO_SWEEP_TICK);
             // First sync shortly after load (a full one, so a new machine gets the lot),
-            // then deltas on a timer.
+            // then deltas on a timer. The cadence is a setting now (quicker updates), read
+            // at load and floored at 20s so it cannot hammer the server; a change takes
+            // effect on the next reload.
             setTimeout(() => syncTick(), 20000);
-            syncTimer = setInterval(syncTick, SYNC_TICK);
+            const everyMs = Math.max(20, Number(settings.store.syncEverySec) || 90) * 1000;
+            syncTimer = setInterval(syncTick, everyMs);
         });
         FluxDispatcher.subscribe("VOICE_STATE_UPDATES", onVoiceStateUpdates);
         FluxDispatcher.subscribe("GUILD_MEMBER_ADD", onGuildMemberAdd);

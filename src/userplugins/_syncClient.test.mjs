@@ -72,6 +72,13 @@ console.log("\n-- opened-profile About rides on the user record --");
     ok("a user with no About has none", !!pn.users[A] && pn.users[A].about === undefined);
 }
 
+console.log("\n-- the minimum call length is tunable (more calls when lowered) --");
+{
+    const p45 = { [A]: prof({ [B]: comp(1, 45000, 90) }) };   // a 45-second call
+    ok("a 45s call is NOT pooled at the default 60s floor", !toPool(p45, [ME]).calls[pairKey(A, B)]);
+    ok("but IS pooled once the floor drops to 30s", !!toPool(p45, [ME], 0, {}, undefined, 30000).calls[pairKey(A, B)]);
+}
+
 console.log("\n-- server names ride along, resolved live from the client's guild list --");
 {
     const c = comp(1, 65000, 90); c.guilds = [G];   // the call happened in server G

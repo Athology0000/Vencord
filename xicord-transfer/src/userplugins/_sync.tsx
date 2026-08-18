@@ -81,7 +81,8 @@ export function toPool(
     mine: string[],
     since = 0,
     names: Record<string, { username: string; avatar: string; at?: number; }> = {},
-    guildName?: (id: string) => string
+    guildName?: (id: string) => string,
+    minCallMs = 60_000
 ): PoolPayload {
     const people: Record<string, PoolPerson> = {};
     const calls: Record<string, PoolCall> = {};
@@ -98,14 +99,15 @@ export function toPool(
         if (!isId(id) || skip.has(id)) continue;
         if ((prof?.updated ?? 0) <= since) continue;          // unchanged since the last push
         const guilds = Object.keys(prof?.guilds ?? {}).filter(isId);
-        // Only calls of at least a minute are SHARED; briefer overlaps stay in the local
-        // dossier but never reach the pool — the long tail of one-off pairs is exactly what
-        // bloats a memory-bounded server past what it can serve, and is noise there anyway.
-        const SYNC_MIN_MS = 60_000;
+        // Only calls of at least `minCallMs` are SHARED; briefer overlaps stay in the local
+        // dossier but never reach the pool — the long tail of one-off pairs is what bloats a
+        // memory-bounded server, so the threshold is tunable (lower = more calls pooled, for
+        // a host with the room). Keep the server's XICORD_POOL_MIN_MS in step, or it drops
+        // whatever slips under its own floor.
         let anyKept = false;
         for (const [c, rec] of Object.entries<any>(prof?.companions ?? {})) {
             if (!isId(c) || c === id || skip.has(c)) continue;
-            if ((rec?.ms ?? 0) < SYNC_MIN_MS) continue;       // brief call — stays local only
+            if ((rec?.ms ?? 0) < minCallMs) continue;       // brief call — stays local only
             if (!anyKept) { touch(id, guilds, prof?.updated ?? 0, prof?.firstSeen ?? 0); anyKept = true; }
             touch(c, guilds, rec?.last ?? 0);
             const k = pairKey(id, c);
