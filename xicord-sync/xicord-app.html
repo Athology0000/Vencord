@@ -245,6 +245,11 @@
         <div class="card panel"><i class="corner tl"></i><i class="corner br"></i><h3>Possible alternate accounts <span class="tag">shared, never together</span></h3><div id="p-alts"></div></div>
         <div class="card panel"><i class="corner tl"></i><i class="corner br"></i><h3>Recent voice activity <span class="tag">newest first</span></h3><div id="p-recent"></div></div>
       </div>
+      <div class="grid2" style="margin-top:16px">
+        <div class="card panel"><i class="corner tl"></i><i class="corner br"></i><h3>Network hubs <span class="tag">connectors</span></h3><div id="p-hubs"></div></div>
+        <div class="card panel"><i class="corner tl"></i><i class="corner br"></i><h3>Connector servers <span class="tag">rooms linking people</span></h3><div id="p-servers"></div></div>
+      </div>
+      <div class="card panel" style="margin-top:16px"><i class="corner tl"></i><i class="corner br"></i><h3>Tight clusters <span class="tag" id="cl-tag">communities</span></h3><div id="p-clusters"></div></div>
     </div>
   </div>
 </div>
@@ -346,12 +351,30 @@ function renderProfile(p){
     out.push('</div>');
   }
 
+  // Graph position + active hours: hub rank, tight-group cluster, and the timezone/active
+  // window inferred from when they show up in voice.
+  var hb=p.hub||{}, cl=p.cluster||{}, hrs=p.hours||{};
+  if(hb.rank||cl.size>1||hrs.samples){
+    out.push('<div class="card panel" style="margin-top:16px"><i class="corner tl"></i><i class="corner br"></i><h3>Graph position &amp; activity</h3>');
+    out.push('<div class="meta">'+
+      (hb.rank?'<span>hub rank #'+fmtN(hb.rank)+' of '+fmtN(hb.of)+'</span>':'')+
+      (cl.size>1?'<span>cluster of '+fmtN(cl.size)+'</span>':'')+
+      (hrs.tzGuess?'<span>peak '+hrs.peakHour+':00 UTC &middot; likely '+esc(hrs.tzGuess)+'</span>':'')+'</div>');
+    if(hrs.samples){ var mx=Math.max.apply(null,hrs.hist);
+      out.push('<div class="row" style="gap:2px;align-items:flex-end;height:46px;margin-top:12px">');
+      for(var h=0;h<24;h++){ var ht=mx?Math.max(2,Math.round(hrs.hist[h]/mx*42)):2; out.push('<div title="'+h+':00 UTC - '+hrs.hist[h]+' joins" style="flex:1;height:'+ht+'px;background:'+(h===hrs.peakHour?'var(--accent)':'var(--line-soft)')+'"></div>'); }
+      out.push('</div><div class="faint" style="font-size:10px;margin-top:3px">voice joins by hour (UTC) &middot; '+hrs.samples+' samples</div>'); }
+    if(cl.peers&&cl.peers.length){ out.push('<div style="margin-top:12px"><div class="faint" style="font-size:11px;margin-bottom:5px">strongest others in their cluster</div><div class="row" style="gap:7px;flex-wrap:wrap">');
+      cl.peers.forEach(function(f){ out.push('<a class="chip" style="cursor:pointer" data-jump="'+esc(f.id)+'">'+esc(nameOf(f))+'</a>'); }); out.push('</div></div>'); }
+    out.push('</div>');
+  }
+
   out.push('<div class="grid2" style="margin-top:16px">');
-  var comps=p.companions||[]; var max=comps.length?comps[0].ms:1;
+  var comps=p.companions||[];
   out.push('<div class="card panel"><i class="corner tl"></i><i class="corner br"></i><h3>Voice companions <span class="tag">'+(p.companionCount||comps.length)+'</span></h3>');
   if(!comps.length) out.push('<div class="empty">No pooled calls for this person.</div>');
-  else{ out.push('<table><thead><tr><th>Person</th><th style="width:34%">Time together</th><th>Calls</th></tr></thead><tbody>');
-    comps.forEach(function(c){ out.push('<tr><td>'+personRow(c)+'</td><td><div class="bar" style="width:'+Math.max(4,Math.round(c.ms/max*100))+'%"></div><span class="faint" style="font-size:11px">'+fmtDur(c.ms)+'</span></td><td class="num">'+c.count+'</td></tr>'); });
+  else{ out.push('<table><thead><tr><th>Person</th><th style="width:30%">Closeness</th><th>Time</th><th title="servers shared with this person">Srv</th></tr></thead><tbody>');
+    comps.forEach(function(c){ out.push('<tr><td>'+personRow(c)+'</td><td><div class="bar" style="width:'+Math.max(4,c.score||0)+'%"></div><span class="faint" style="font-size:11px">'+(c.score||0)+'</span></td><td class="faint" style="font-size:11px">'+fmtDur(c.ms)+'</td><td class="num">'+(c.shared||0)+'</td></tr>'); });
     out.push('</tbody></table>'); }
   out.push('</div>');
 
@@ -359,7 +382,7 @@ function renderProfile(p){
   out.push('<div class="card panel"><i class="corner tl"></i><i class="corner br"></i><h3>Possible alternate accounts <span class="tag">shared, never together</span></h3>');
   var alts=p.alts||[];
   if(!alts.length) out.push('<div class="empty">Nothing meets the bar.</div>');
-  else alts.forEach(function(a){ out.push('<div class="row" style="justify-content:space-between;padding:7px 0;border-bottom:1px solid var(--line-soft)">'+personRow(a)+'<span class="badge alt">'+a.shared+' shared</span></div>'); });
+  else alts.forEach(function(a){ out.push('<div style="padding:7px 0;border-bottom:1px solid var(--line-soft)"><div class="row" style="justify-content:space-between">'+personRow(a)+'<span class="badge alt">'+(a.score||0)+'</span></div>'+(a.reasons&&a.reasons.length?'<div class="faint" style="font-size:11px;margin-top:3px">'+esc(a.reasons.join(' · '))+'</div>':'')+'</div>'); });
   out.push('</div>');
   out.push('<div class="card panel"><i class="corner tl"></i><i class="corner br"></i><h3>Added / mutual friends <span class="tag">'+(p.friendCount||(p.friends||[]).length)+'</span></h3>');
   var fr=p.friends||[];
@@ -387,6 +410,13 @@ function renderDashboard(){
     document.getElementById("p-alts").innerHTML= d.alts.length? d.alts.map(function(p){return '<div class="row" style="justify-content:space-between;padding:7px 0;border-bottom:1px solid var(--line-soft)"><span class="clip">'+esc(nameOf(p.a))+'</span><span class="faint">~</span><span class="clip">'+esc(nameOf(p.b))+'</span><span class="badge alt">'+p.shared+'</span></div>';}).join("") : '<div class="empty">No strong alt signals among the top-connected.</div>';
     document.getElementById("p-recent").innerHTML= d.recent.length? '<ul class="tl">'+d.recent.map(function(r){var t=r.act==="joined"?"joined":r.act==="left"?"left":"moved";return '<li><span class="t">'+esc(ago(r.at))+'</span><span>'+esc(nameOf(r))+' '+t+'</span></li>';}).join("")+'</ul>' : '<div class="empty">No pooled voice timeline yet.</div>';
   }).catch(function(e){ var n=document.getElementById("d-need"); n.style.display="block"; n.innerHTML='<div class="empty">'+esc(e.message)+'. Check <a href="#/settings" style="color:var(--accent)">Settings</a>.</div>'; document.getElementById("d-ui").style.display="none"; });
+  // graph intelligence: hubs, connector servers, tight clusters
+  api("/v1/graph").then(function(g){
+    document.getElementById("p-hubs").innerHTML='<table><tbody>'+g.hubs.map(function(h){return '<tr><td>'+personRow(h)+'</td><td class="num">'+fmtN(h.deg)+' links</td></tr>';}).join("")+'</tbody></table>';
+    document.getElementById("p-servers").innerHTML= g.servers.length? '<table><tbody>'+g.servers.map(function(s){return '<tr><td class="clip">'+s.sample.slice(0,3).map(function(u){return esc(nameOf(u));}).join(', ')+(s.count>3?' <span class="faint">+'+fmtN(s.count-3)+'</span>':'')+'</td><td class="num">'+fmtN(s.count)+'</td></tr>';}).join("")+'</tbody></table>' : '<div class="empty">No shared servers pooled.</div>';
+    var cel=document.getElementById("cl-tag"); if(cel) cel.textContent=fmtN(g.counts.clusters)+' communities';
+    document.getElementById("p-clusters").innerHTML= g.clusters.length? g.clusters.map(function(c){return '<div style="padding:8px 0;border-bottom:1px solid var(--line-soft)"><div class="faint" style="font-size:11px;margin-bottom:5px">'+fmtN(c.size)+' people</div><div class="row" style="gap:7px;flex-wrap:wrap">'+c.members.map(function(u){return '<a class="chip" style="cursor:pointer" data-jump="'+esc(u.id)+'">'+esc(nameOf(u))+'</a>';}).join("")+'</div></div>';}).join("") : '<div class="empty">No clusters yet.</div>';
+  }).catch(function(){});
 }
 
 function landingCounts(){ if(!haveCfg())return; api("/v1/summary").then(function(d){

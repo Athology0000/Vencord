@@ -25,6 +25,7 @@ const { mergeAll, mergeSnapshot, sanitize } = require("./merge");
 const { mergeAllPools, mergePool, mergePoolInto, sanitizePool, sanitizePrivate, mergePrivate, mergeFriendGraphs } = require("./pool");
 const auth = require("./auth");
 const pages = require("./pages");
+const intel = require("./intel");
 
 const PORT = Number(process.env.PORT) || 8080;
 const DATA_DIR = process.env.DATA_DIR || "/data";
@@ -868,7 +869,7 @@ const server = http.createServer(async (req, res) => {
         return sendRaw(res, 200, await pooledBody(since));
     }
     // --- lightweight, pre-resolved lookups so the console never pulls the whole pool ---
-    if ((url === "/v1/profile" || url === "/v1/summary") && req.method === "GET") {
+    if ((url === "/v1/profile" || url === "/v1/summary" || url === "/v1/graph") && req.method === "GET") {
         if (maintenanceOn()) return send(res, 503, { error: "maintenance", retry: 60 });
         const view = await mergedView();
         const P = view.pooled;
@@ -885,6 +886,10 @@ const server = http.createServer(async (req, res) => {
             view.__idx = { by, ms, deg };
         }
         const idx = view.__idx;
+        // Graph + relationship intelligence (centrality, clusters, server links, closeness
+        // scale), computed once per merged view and cached beside the adjacency index.
+        if (!view.__intel) view.__intel = intel.buildIntel(P, idx, view.friends);
+        const IN = view.__intel;
         const uinfo = id => { const u = P.users[id] || {}; return { id, username: u.username || null, avatar: u.avatar || null }; };
         // Account creation is a pure function of the snowflake (top 42 bits are ms since the
         // Discord epoch), so it is DERIVED here rather than stored -- zero bytes in the pool,
@@ -910,6 +915,30 @@ const server = http.createServer(async (req, res) => {
             return send(res, 200, { people, pairs, totalMs, topVoice, topConnected: topConn, alts: alt.slice(0, 10), recent: recent.slice(0, 14) });
         }
 
+        if (url === "/v1/graph") {
+            const cen = IN.centrality;
+            // the connectors: who the network runs through
+            const hubs = Object.keys(cen).sort((a, b) => cen[b] - cen[a]).slice(0, 24)
+                .map(hid => ({ ...uinfo(hid), score: Math.round(cen[hid] * 10) / 10, deg: idx.deg[hid] || 0 }));
+            // the tight groups, each with its strongest few members
+            const byCluster = {};
+            for (const pid in IN.cluster) { const cl = IN.cluster[pid]; (byCluster[cl] || (byCluster[cl] = [])).push(pid); }
+            const bigClusters = Object.keys(byCluster).filter(cl => byCluster[cl].length >= 3);
+            const clusterList = bigClusters.sort((a, b) => byCluster[b].length - byCluster[a].length).slice(0, 12)
+                .map(cl => ({ size: byCluster[cl].length, members: byCluster[cl].sort((a, b) => (cen[b] || 0) - (cen[a] || 0)).slice(0, 8).map(uinfo) }));
+            // the rooms that link the most pooled people
+            const servers = intel.topServers(IN.guildMembers, 24)
+                .map(s => ({ ...s, sample: (IN.guildMembers[s.guild] || []).sort((a, b) => (cen[b] || 0) - (cen[a] || 0)).slice(0, 6).map(uinfo) }));
+            return send(res, 200, {
+                hubs, clusters: clusterList, servers,
+                counts: {
+                    people: Object.keys(P.people).length || Object.keys(P.users).length,
+                    clusters: bigClusters.length,
+                    servers: Object.keys(IN.guildMembers).filter(g => IN.guildMembers[g].length >= 2).length
+                }
+            });
+        }
+
         // /v1/profile — resolve q (id: / dn: / name: / @ / tag: / auto), then assemble
         const q = new URLSearchParams((req.url || "").split("?")[1] || "");
         const query = (q.get("q") || "").trim();
@@ -932,16 +961,57 @@ const server = http.createServer(async (req, res) => {
         }
         if (matches) return send(res, 200, { matches: matches.map(uinfo) });
         if (!id) return send(res, 404, { error: "no match", q: query });
+        const now = Date.now();
         const comp = idx.by[id] || {};
-        const companions = Object.keys(comp).map(o => ({ ...uinfo(o), ms: comp[o].ms || 0, count: comp[o].count || 0, last: comp[o].last || 0 })).sort((a, b) => b.ms - a.ms).slice(0, 50);
         const person = P.people[id] || {};
+        const myGuilds = person.guilds || [];
+        const myAbout = (P.users[id] && P.users[id].about) || null;
+        const myConns = myAbout && myAbout.conns || null;
+        // companions ranked by a 0..100 closeness score, each tagged with how many servers
+        // they share with this person
+        const companions = Object.keys(comp).map(o => {
+            const oc = comp[o]; const og = (P.people[o] && P.people[o].guilds) || [];
+            return { ...uinfo(o), ms: oc.ms || 0, count: oc.count || 0, last: oc.last || 0,
+                score: intel.closeness(oc, now, IN.maxMs), shared: intel.sharedServers(myGuilds, og).length };
+        }).sort((a, b) => b.score - a.score || b.ms - a.ms).slice(0, 50);
         const v = P.voice[id]; const voice = ((v && v.events) || []).slice(0, 60);
+        const hours = intel.activeHours((v && v.events) || [], 8);
         const fr = (view.friends[id] && view.friends[id].friends) || [];
         const friends = fr.slice(0, 80).map(uinfo);
-        const mine = {}; for (const o in comp) mine[o] = 1; const score = {};
-        for (const o in comp) { const their = idx.by[o] || {}; for (const x in their) if (x !== id && mine[x]) score[x] = (score[x] || 0) + 1; }
-        const alts = Object.keys(score).filter(o => o !== id && !comp[o] && score[o] >= 3).map(o => ({ ...uinfo(o), shared: score[o] })).sort((a, b) => b.shared - a.shared).slice(0, 8);
-        return send(res, 200, { ...uinfo(id), about: (P.users[id] && P.users[id].about) || null, created: createdAt(id), guilds: person.guilds || [], first: person.first || 0, last: person.last || 0, totalMs: idx.ms[id] || 0, companionCount: Object.keys(comp).length, friendCount: fr.length, companions, voice, friends, alts });
+
+        // where they sit in the graph: their cluster + the strongest others in it, and their
+        // hub rank among everyone pooled
+        const clusterId = IN.cluster[id] || null;
+        const clusterSize = clusterId ? (IN.clusterSize[clusterId] || 1) : 1;
+        let clusterPeers = [];
+        if (clusterId && clusterSize > 1) {
+            clusterPeers = Object.keys(IN.cluster).filter(o => o !== id && IN.cluster[o] === clusterId)
+                .sort((a, b) => (IN.centrality[b] || 0) - (IN.centrality[a] || 0)).slice(0, 12).map(uinfo);
+        }
+        const cenScore = IN.centrality[id] || 0;
+        let hubRank = 1; for (const o in IN.centrality) if ((IN.centrality[o] || 0) > cenScore) hubRank++;
+
+        // servers that link this person to other pooled people, biggest first
+        const servers = myGuilds.map(g => ({ guild: g, count: (IN.guildMembers[g] || []).length }))
+            .filter(s => s.count >= 2).sort((a, b) => b.count - a.count).slice(0, 20);
+
+        // alt candidates: shared contacts never in a call with, scored with the richer signals
+        const mine = {}; for (const o in comp) mine[o] = 1; const shScore = {};
+        for (const o in comp) { const their = idx.by[o] || {}; for (const x in their) if (x !== id && mine[x]) shScore[x] = (shScore[x] || 0) + 1; }
+        const alts = Object.keys(shScore).filter(o => o !== id && !comp[o] && shScore[o] >= 3).map(o => {
+            const oAbout = (P.users[o] && P.users[o].about) || null;
+            const a = intel.altScore({ b: o, byA: comp, byB: idx.by[o] || {}, guildsA: myGuilds,
+                guildsB: (P.people[o] && P.people[o].guilds) || [], connsA: myConns, connsB: oAbout && oAbout.conns,
+                peakA: hours.peakHour, peakB: intel.activeHours((P.voice[o] && P.voice[o].events) || [], 8).peakHour });
+            return { ...uinfo(o), shared: shScore[o], score: a.score, reasons: a.reasons };
+        }).sort((a, b) => b.score - a.score || b.shared - a.shared).slice(0, 8);
+
+        return send(res, 200, { ...uinfo(id), about: myAbout, created: createdAt(id),
+            guilds: myGuilds, first: person.first || 0, last: person.last || 0, totalMs: idx.ms[id] || 0,
+            companionCount: Object.keys(comp).length, friendCount: fr.length,
+            hub: { score: Math.round(cenScore * 10) / 10, rank: hubRank, of: Object.keys(IN.centrality).length },
+            cluster: { id: clusterId, size: clusterSize, peers: clusterPeers },
+            hours, servers, companions, voice, friends, alts });
     }
 
     if (url === "/v1/pool" && req.method === "POST") {

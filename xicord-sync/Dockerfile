@@ -7,7 +7,7 @@ WORKDIR /app
 
 # Only the runtime files (server.js reads xicord-app.html from its own dir, and requires
 # ./merge ./pool ./auth ./pages). Tests, data and .env are excluded via .dockerignore.
-COPY package.json server.js pool.js merge.js auth.js pages.js xicord-app.html ./
+COPY package.json server.js pool.js merge.js auth.js pages.js intel.js xicord-app.html ./
 
 ENV NODE_ENV=production \
     PORT=8080 \
