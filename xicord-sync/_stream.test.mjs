@@ -26,7 +26,7 @@ writeFileSync(join(dir, "auth", "tokens.json"), JSON.stringify({ tok: { user: OW
 const PORT = 8907;
 const srv = spawn(process.execPath, ["server.js"], {
     cwd: "C:/Users/aeare/Desktop/Vencord/xicord-sync",
-    env: { ...process.env, DATA_DIR: dir, PORT: String(PORT), XICORD_TOKENS: "", XICORD_ALIASES: "" },
+    env: { ...process.env, DATA_DIR: dir, PORT: String(PORT), XICORD_TOKENS: "", XICORD_ALIASES: "", XICORD_POOL_MIN_MS: "0" },
     stdio: ["ignore", "pipe", "pipe"],
 });
 let log = ""; srv.stdout.on("data", d => { log += d; }); srv.stderr.on("data", d => { log += d; });

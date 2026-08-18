@@ -16,6 +16,7 @@ const fs = require("fs");
 const fsp = require("fs/promises");
 const path = require("path");
 const crypto = require("crypto");
+const readline = require("readline");
 const { mergeAll, mergeSnapshot, sanitize } = require("./merge");
 const { mergeAllPools, mergePool, mergePoolInto, sanitizePool, sanitizePrivate, mergePrivate, mergeFriendGraphs } = require("./pool");
 const auth = require("./auth");
@@ -27,10 +28,19 @@ const DEVICES_DIR = path.join(DATA_DIR, "devices");   // v1, kept until every de
 const POOL_DIR = path.join(DATA_DIR, "pool");         // shared observations, one slice per contributor
 const USERS_DIR = path.join(DATA_DIR, "users");       // private blobs, never merged across users
 const AUTH_FILE = path.join(DATA_DIR, "auth", "tokens.json");  // tokens issued by sign-in
+// A safety valve: set XICORD_MAINTENANCE=1 to make the heavy merged-view build return 503
+// instead of running, so an oversized pool cannot OOM-crash the process in a loop while it
+// is being dealt with. Off by default.
+function maintenanceOn() { return process.env.XICORD_MAINTENANCE === "1"; }
 // A full re-sync is ~6MB today; leave room to grow. Overridable so the tests can drive
 // the oversize path at a size that doesn't take a second to transfer.
 const MAX_BODY = Number(process.env.MAX_BODY_BYTES) || 32 * 1024 * 1024;
 const VERSION = "1.0.0";
+// The Xicord console SPA (landing + query + dashboard), read once and served same-origin
+// so its /v1/pool fetch needs no CORS. Static — it never builds the merged view, so it
+// loads even under maintenance and cannot OOM the container.
+let SPA_HTML = null;
+try { SPA_HTML = fs.readFileSync(path.join(__dirname, "xicord-app.html"), "utf8"); } catch { }
 
 /* ---------------- tokens ---------------- */
 // token -> deviceId. The device is derived from the token, never sent by the client, so
@@ -252,11 +262,15 @@ async function readAllPools() {
         if (!n.endsWith(".json")) continue;
         const file = path.join(POOL_DIR, n);
         seen.add(file);
-        const { pool, logBytes } = await sliceWithLog(file, `${file}.log`);
-        // Fold the log back in once it has grown, so replay cost stays bounded. This is
-        // the one place that already holds the whole slice, so it is the cheap place.
+        // Compact an oversized log FIRST, then read the compacted slice — rather than
+        // reading (holding the whole merged slice) and THEN compacting (which re-reads and
+        // holds a SECOND copy). On a big slice those two live copies at once were a large
+        // part of the per-request peak that OOM-killed the 1GB container. Sequencing them
+        // means only one merged copy is ever live. Cheap stat, no read, when the log is small.
+        let logBytes = 0;
+        try { logBytes = (await fsp.stat(`${file}.log`)).size; } catch { }
         if (logBytes > MAX_LOG_BYTES) await compact(n.slice(0, -5), file);
-        out.push(pool);
+        out.push((await sliceWithLog(file, `${file}.log`)).pool);
     }
     // A contributor whose first push has not been compacted yet has a log but no slice.
     for (const n of names) {
@@ -433,7 +447,8 @@ const poolLog = id => `${poolFile(id)}.log`;
 const counts = p => ({
     people: Object.keys(p.people || {}).length,
     calls: Object.keys(p.calls || {}).length,
-    users: Object.keys(p.users || {}).length
+    users: Object.keys(p.users || {}).length,
+    voice: Object.keys(p.voice || {}).length
 });
 
 /**
@@ -446,6 +461,7 @@ function stampArrival(clean, now) {
     for (const id in clean.people) clean.people[id].sat = now;
     for (const k in clean.calls) clean.calls[k].sat = now;
     for (const id in clean.users || {}) clean.users[id].sat = now;
+    for (const id in clean.voice || {}) clean.voice[id].sat = now;
     return clean;
 }
 // Compacted when the log passes this, so replay stays bounded. Only ever done on a cold
@@ -473,21 +489,38 @@ function appendPush(logFile, clean) {
     return fsp.appendFile(logFile, "\n" + JSON.stringify(clean) + "\n", "utf8");
 }
 
-/** Slice + everything appended since it was written. */
+/**
+ * Slice + everything appended since it was written.
+ *
+ * The log is STREAMED line by line, never read whole into memory. A busy contributor's log
+ * runs to hundreds of MB before compaction, and `readFile` + `split("\n")` held two copies
+ * of all of it at once — on a 1GB container that alone was the OOM that crash-looped this
+ * service (and the crash is why the log never got compacted, so it only grew). Peak here is
+ * now the merged slice plus ONE log line, which is bounded by MAX_BODY per push.
+ */
 async function sliceWithLog(file, logFile) {
-    const pool = await readJson(file, { people: {}, calls: {}, users: {} });
+    const pool = await readJson(file, { people: {}, calls: {}, users: {}, voice: {} });
     if (!pool.people) pool.people = {};
     if (!pool.calls) pool.calls = {};
     if (!pool.users) pool.users = {};
-    let text = "";
-    try { text = await fsp.readFile(logFile, "utf8"); } catch { return { pool, logBytes: 0 }; }
-    for (const line of text.split("\n")) {
-        if (!line) continue;
-        // A torn last line is possible if the process died mid-append. Everything before
-        // it still applies, and the client re-sends anything a failed sync did not bank.
-        try { mergePoolInto(pool, JSON.parse(line)); } catch { }
-    }
-    return { pool, logBytes: Buffer.byteLength(text) };
+    // Absent from every slice written before the timeline existed, so it is defaulted
+    // rather than assumed — mergePoolInto writes into it directly.
+    if (!pool.voice) pool.voice = {};
+    let logBytes = 0;
+    try { logBytes = (await fsp.stat(logFile)).size; } catch { return { pool, logBytes: 0 }; }
+    if (!logBytes) return { pool, logBytes: 0 };
+    await new Promise((resolve, reject) => {
+        const rl = readline.createInterface({ input: fs.createReadStream(logFile, "utf8"), crlfDelay: Infinity });
+        rl.on("line", line => {
+            if (!line) return;
+            // A torn last line is possible if the process died mid-append. Everything before
+            // it still applies, and the client re-sends anything a failed sync did not bank.
+            try { mergePoolInto(pool, JSON.parse(line)); } catch { }
+        });
+        rl.on("close", resolve);
+        rl.on("error", reject);
+    });
+    return { pool, logBytes };
 }
 
 /** Read every slice and merge. Cached, and never run twice concurrently. */
@@ -588,7 +621,7 @@ async function pooledBody(since) {
         if (fullBodyCache && Date.now() - fullBodyCache.builtAt < POOL_TTL) return fullBodyCache.body;
         const view = await mergedView();
         const body = JSON.stringify(payload(view.pooled, view.friends,
-            view.pooled.people, view.pooled.calls, view.pooled.users || {}, 0, view.at));
+            view.pooled.people, view.pooled.calls, view.pooled.users || {}, view.pooled.voice || {}, 0, view.at));
         // stamped with the VIEW's own time, not now: the body describes the pool as it
         // was then, and the client turns this into its watermark
         fullBodyCache = { body, at: view.at, builtAt: Date.now() };
@@ -601,14 +634,19 @@ async function pooledBody(since) {
         newerThan(pooled.people, since),
         newerThan(pooled.calls, since),
         newerThan(pooled.users || {}, since),
+        // Same `sat` filter as the rest. A timeline is restamped on every push that
+        // touches it, so a person who gained one new event comes back with their whole
+        // (capped) history rather than a diff — which is what makes the client's fold a
+        // plain set union with nothing to reconcile.
+        newerThan(pooled.voice || {}, since),
         since, view.at
     ));
 }
 
 
-function payload(pooled, friends, people, calls, users, since, builtAt) {
+function payload(pooled, friends, people, calls, users, voice, since, builtAt) {
     return {
-        people, calls, users, friends,
+        people, calls, users, voice, friends,
         // Complete every time, so a client can drop what has vanished. See pooledBody().
         friendsComplete: true,
         since: since || 0,
@@ -677,17 +715,61 @@ const server = http.createServer(async (req, res) => {
         const slices = await readAllSlices().catch(() => []);
         return send(res, 200, { ok: true, service: "xicord-sync", version: VERSION, devices: slices.length });
     }
+    // Operator repair endpoints (token-gated): inspect on-disk sizes and swap a slice
+    // off-box when a pool has grown past what a 1GB container can build in memory. Streamed
+    // both ways so they never load a big file whole.
+    if (url.startsWith("/v1/admin/")) {
+        if (!ownerFor(bearer(req))) return send(res, 401, { error: "unauthorized" });
+        const q = new URLSearchParams((req.url || "").split("?")[1] || "");
+        const safe = n => /^[A-Za-z0-9_-]{1,64}.json(.(log|upload|tmp))?$/.test(n) ? path.join(POOL_DIR, n) : null;
+        if (url === "/v1/admin/list") {
+            const rows = [];
+            try { for (const n of await fsp.readdir(POOL_DIR)) { try { rows.push({ n, bytes: (await fsp.stat(path.join(POOL_DIR, n))).size }); } catch { } } } catch { }
+            return send(res, 200, { pool: rows.sort((a, b) => b.bytes - a.bytes) });
+        }
+        if (url === "/v1/admin/raw" && req.method === "GET") {
+            const file = safe(q.get("f") || ""); if (!file) return send(res, 400, { error: "bad name" });
+            let sz = 0; try { sz = (await fsp.stat(file)).size; } catch { return send(res, 404, { error: "no such file" }); }
+            res.writeHead(200, { "Content-Type": "application/octet-stream", "Content-Length": sz });
+            return fs.createReadStream(file).pipe(res);
+        }
+        if (url === "/v1/admin/putslice" && req.method === "POST") {
+            const file = safe(q.get("f") || ""); if (!file || !file.endsWith(".json")) return send(res, 400, { error: "bad name" });
+            const tmp = file + ".upload";
+            await new Promise((resolve, reject) => {
+                const ws = fs.createWriteStream(tmp);
+                const src = q.get("gz") === "1" ? req.pipe(require("zlib").createGunzip()) : req;
+                src.on("error", reject); src.pipe(ws);
+                ws.on("finish", resolve); ws.on("error", reject); req.on("error", reject);
+            });
+            await fsp.rename(tmp, file);
+            if (q.get("dropLog") === "1") await fsp.rm(file + ".log", { force: true });
+            invalidatePool();
+            let sz = 0; try { sz = (await fsp.stat(file)).size; } catch { }
+            return send(res, 200, { ok: true, wrote: sz, droppedLog: q.get("dropLog") === "1" });
+        }
+        if (url === "/v1/admin/rm" && req.method === "POST") {
+            const file = safe(q.get("f") || ""); if (!file) return send(res, 400, { error: "bad name" });
+            let existed = false; try { existed = fs.existsSync(file); await fsp.rm(file, { force: true }); } catch (e) { return send(res, 500, { error: String(e.message) }); }
+            invalidatePool();
+            return send(res, 200, { removed: q.get("f"), existed });
+        }
+        return send(res, 404, { error: "unknown admin route" });
+    }
     if (url === "/app" || url === "/data") {
         return sendHtml(res, 200, pages.appPage());
     }
-    if (url === "/" || url === "/login") {
+    if ((url === "/" || url === "/console") && SPA_HTML) {
+        return sendHtml(res, 200, SPA_HTML);
+    }
+    if (url === "/login" || url === "/") {
         // Through the shared cached view, never a direct re-merge. This route needs no
         // token, and re-reading and re-merging every slice per hit — tens of MB of parsing
         // and object building — is precisely the overlapping-full-merge that exhausted the
         // container and had the platform restart it into a loop. Concurrent callers share
         // one build here, and the answer is a single number off a view that is already held.
         let people = 0;
-        try { people = Object.keys((await mergedView()).pooled.people).length; } catch { }
+        if (!maintenanceOn()) { try { people = Object.keys((await mergedView()).pooled.people).length; } catch { } }
         let devices = 0;
         try { devices = (await fsp.readdir(POOL_DIR)).filter(f => f.endsWith(".json")).length; } catch { }
         return sendHtml(res, 200, pages.loginPage({
@@ -730,6 +812,9 @@ const server = http.createServer(async (req, res) => {
 
     /* ---- v2: the shared pool ---- */
     if (url === "/v1/pool" && req.method === "GET") {
+        // While a repair is in progress the heavy merged-view build is disabled, so a
+        // client's routine pull cannot OOM-kill the process out from under the upload.
+        if (maintenanceOn()) return send(res, 503, { error: "maintenance", retry: 60 });
         const q = new URLSearchParams((req.url || "").split("?")[1] || "");
         const raw = Number(q.get("since"));
         // Anything not a sane past timestamp means "give me everything": a NaN, a negative
@@ -738,6 +823,79 @@ const server = http.createServer(async (req, res) => {
         const since = Number.isFinite(raw) && raw > 0 && raw <= Date.now() ? raw : 0;
         return sendRaw(res, 200, await pooledBody(since));
     }
+    // --- lightweight, pre-resolved lookups so the console never pulls the whole pool ---
+    if ((url === "/v1/profile" || url === "/v1/summary") && req.method === "GET") {
+        if (maintenanceOn()) return send(res, 503, { error: "maintenance", retry: 60 });
+        const view = await mergedView();
+        const P = view.pooled;
+        // call-adjacency, built once and cached on the view
+        if (!view.__idx) {
+            const by = {}, ms = {}, deg = {};
+            for (const k in P.calls) {
+                const c = P.calls[k]; const i = k.indexOf("|");
+                const a = k.slice(0, i), b = k.slice(i + 1); if (!a || !b) continue;
+                (by[a] || (by[a] = {}))[b] = c; (by[b] || (by[b] = {}))[a] = c;
+                ms[a] = (ms[a] || 0) + (c.ms || 0); ms[b] = (ms[b] || 0) + (c.ms || 0);
+                deg[a] = (deg[a] || 0) + 1; deg[b] = (deg[b] || 0) + 1;
+            }
+            view.__idx = { by, ms, deg };
+        }
+        const idx = view.__idx;
+        const uinfo = id => { const u = P.users[id] || {}; return { id, username: u.username || null, avatar: u.avatar || null }; };
+
+        if (url === "/v1/summary") {
+            const people = Object.keys(P.people).length || Object.keys(P.users).length;
+            const pairs = Object.keys(P.calls).length;
+            let totalMs = 0; for (const k in P.calls) totalMs += P.calls[k].ms || 0;
+            const topVoice = Object.keys(idx.ms).map(id => ({ ...uinfo(id), ms: idx.ms[id] })).sort((a, b) => b.ms - a.ms).slice(0, 12);
+            const topConn = Object.keys(idx.deg).map(id => ({ ...uinfo(id), deg: idx.deg[id] })).sort((a, b) => b.deg - a.deg).slice(0, 12);
+            const cand = topConn.map(t => t.id), alt = [];
+            for (let i = 0; i < cand.length; i++) for (let j = i + 1; j < cand.length; j++) {
+                const a = cand[i], b = cand[j]; if ((idx.by[a] || {})[b]) continue;
+                let sh = 0; const A = idx.by[a] || {}, B = idx.by[b] || {}; for (const o in A) if (B[o]) sh++;
+                if (sh >= 4) alt.push({ a: uinfo(a), b: uinfo(b), shared: sh });
+            }
+            alt.sort((x, y) => y.shared - x.shared);
+            const recent = [];
+            for (const id in P.voice) for (const e of (P.voice[id].events || [])) recent.push({ ...uinfo(id), act: e.act, at: e.at });
+            recent.sort((a, b) => b.at - a.at);
+            return send(res, 200, { people, pairs, totalMs, topVoice, topConnected: topConn, alts: alt.slice(0, 10), recent: recent.slice(0, 14) });
+        }
+
+        // /v1/profile — resolve q (id: / dn: / name: / @ / tag: / auto), then assemble
+        const q = new URLSearchParams((req.url || "").split("?")[1] || "");
+        const query = (q.get("q") || "").trim();
+        if (!query) return send(res, 400, { error: "missing q" });
+        let id = null, matches = null, mode = "auto", val = query;
+        const mm = query.match(/^(id|dn|name|user|u|tag|t)\s*:\s*([\s\S]+)$/i);
+        if (mm) { const k = mm[1].toLowerCase(); val = mm[2].trim(); mode = (k === "id") ? "id" : "name"; }
+        else if (query.charAt(0) === "@") { mode = "name"; val = query.slice(1); }
+        if (mode === "id" || (mode === "auto" && /^\d{5,25}$/.test(val))) {
+            const cid = val.replace(/[^0-9]/g, ""); if (/^\d{5,25}$/.test(cid)) id = cid;
+        }
+        if (!id) {
+            const needle = val.replace(/^@/, "").split("#")[0].trim().toLowerCase();
+            if (needle) {
+                const exact = [], part = [];
+                for (const uid in P.users) { const n = (P.users[uid].username || "").toLowerCase(); if (n === needle) exact.push(uid); else if (n.indexOf(needle) >= 0) part.push(uid); }
+                const cands = exact.length ? exact : part;
+                if (cands.length === 1) id = cands[0]; else if (cands.length > 1) matches = cands.slice(0, 40);
+            }
+        }
+        if (matches) return send(res, 200, { matches: matches.map(uinfo) });
+        if (!id) return send(res, 404, { error: "no match", q: query });
+        const comp = idx.by[id] || {};
+        const companions = Object.keys(comp).map(o => ({ ...uinfo(o), ms: comp[o].ms || 0, count: comp[o].count || 0, last: comp[o].last || 0 })).sort((a, b) => b.ms - a.ms).slice(0, 50);
+        const person = P.people[id] || {};
+        const v = P.voice[id]; const voice = ((v && v.events) || []).slice(0, 60);
+        const fr = (view.friends[id] && view.friends[id].friends) || [];
+        const friends = fr.slice(0, 80).map(uinfo);
+        const mine = {}; for (const o in comp) mine[o] = 1; const score = {};
+        for (const o in comp) { const their = idx.by[o] || {}; for (const x in their) if (x !== id && mine[x]) score[x] = (score[x] || 0) + 1; }
+        const alts = Object.keys(score).filter(o => o !== id && !comp[o] && score[o] >= 3).map(o => ({ ...uinfo(o), shared: score[o] })).sort((a, b) => b.shared - a.shared).slice(0, 8);
+        return send(res, 200, { ...uinfo(id), guilds: person.guilds || [], first: person.first || 0, last: person.last || 0, totalMs: idx.ms[id] || 0, companionCount: Object.keys(comp).length, friendCount: fr.length, companions, voice, friends, alts });
+    }
+
     if (url === "/v1/pool" && req.method === "POST") {
         if (!owner) return send(res, 403, { error: "this token is not bound to a user" });
         let parsed;
@@ -748,7 +906,7 @@ const server = http.createServer(async (req, res) => {
         }
         const clean = stampArrival(sanitizePool(parsed), Date.now());
         const empty = !Object.keys(clean.people).length && !Object.keys(clean.calls).length
-            && !Object.keys(clean.users || {}).length;
+            && !Object.keys(clean.users || {}).length && !Object.keys(clean.voice || {}).length;
         let slice = null;
         await withLock(`pool:${owner}`, async () => {
             // A push with nothing in it used to cost the same full read-merge-write as a
@@ -760,7 +918,7 @@ const server = http.createServer(async (req, res) => {
             if (sliceBytes <= SMALL_SLICE_BYTES) {
                 // Small enough that rewriting it costs nothing, and it keeps the on-disk
                 // shape as simple as possible: one file per contributor, always current.
-                const next = mergePool(await readJson(file, { people: {}, calls: {}, users: {} }), clean);
+                const next = mergePool(await readJson(file, { people: {}, calls: {}, users: {}, voice: {} }), clean);
                 await writeJson(file, next);
                 // Free here — this path already holds the whole merged slice.
                 slice = counts(next);
@@ -901,7 +1059,7 @@ async function adoptOrphanedBlobs() {
         if (target === from) continue;
         for (const [dir, read, merge, empty] of [
             [USERS_DIR, userFile, mergePrivate, { friends: {}, watching: [], notes: {} }],
-            [POOL_DIR, poolFile, mergePool, { people: {}, calls: {}, users: {} }],
+            [POOL_DIR, poolFile, mergePool, { people: {}, calls: {}, users: {}, voice: {} }],
         ]) {
             const src = path.join(dir, `${from}.json`);
             try { await fsp.access(src); } catch { continue; }   // nothing to adopt

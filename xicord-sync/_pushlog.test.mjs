@@ -32,7 +32,7 @@ function start() {
         cwd: "C:/Users/aeare/Desktop/Vencord/xicord-sync",
         env: {
             ...process.env, DATA_DIR: dir, PORT: String(PORT),
-            XICORD_TOKENS: "", XICORD_ALIASES: "",
+            XICORD_TOKENS: "", XICORD_ALIASES: "", XICORD_POOL_MIN_MS: "0",
             // tiny, so a handful of records crosses into the log path. The first push
             // below writes ~550 bytes, so the threshold has to sit under that for the
             // SECOND push to take the append path — otherwise this suite quietly tests

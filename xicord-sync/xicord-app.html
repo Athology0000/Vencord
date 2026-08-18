@@ -1,0 +1,416 @@
+<!DOCTYPE html>
+<html lang="en" style="color-scheme:dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Xicord</title>
+<meta name="description" content="Xicord — a Discord relationship-intelligence console. Sweep, pool, and query who knows whom.">
+<style>
+  :root{
+    /* grayscale console palette — no hue in the chrome; tints are earned, per-signal */
+    --bg:#000; --bg-2:#0a0a0a; --panel:#0f0f0f; --panel-2:#141414;
+    --line:rgba(255,255,255,.08); --line-soft:rgba(255,255,255,.06); --line-lit:rgba(255,255,255,.18);
+    --text:#fafafa; --muted:#a1a1a1; --muted-2:#8b8b8b; --faint:#6b6b6b; --dim:#4a4a4a;
+    --headline:linear-gradient(180deg,#fafafa 0%,#d4d4d4 45%,#8a8a8a 100%);
+    --font-ui:"Inter",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    --font-mono:ui-monospace,"SF Mono","Cascadia Code",Menlo,Consolas,monospace;
+    --accent:#6aa0e0; --good:#6bc48a; --warn:#d6a557; --bad:#dd8a9a; --violet:#9b8ee6;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  html,body{margin:0;background:var(--bg);color:var(--text);font-family:var(--font-ui)}
+  body{line-height:1.6;-webkit-font-smoothing:antialiased;min-height:100vh;overflow-x:hidden;position:relative;background:transparent}
+  a{color:inherit;text-decoration:none}
+  h1,h2,h3{margin:0;line-height:1.08;font-weight:700}
+  canvas#bg{position:fixed;inset:0;width:100vw;height:100vh;z-index:-1;display:block}
+  .wrap{max-width:1160px;margin:0 auto;padding:0 24px;width:100%}
+  .grad{background:var(--headline);-webkit-background-clip:text;background-clip:text;color:transparent}
+  .mono{font-family:var(--font-mono)}
+  .muted{color:var(--muted)} .faint{color:var(--faint)}
+
+  /* ---- top nav ---- */
+  nav{position:sticky;top:0;z-index:40;backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);
+      background:rgba(0,0,0,.55);border-bottom:1px solid var(--line-soft)}
+  nav .wrap{display:flex;align-items:center;gap:26px;height:60px}
+  .brand{display:flex;align-items:center;gap:10px;font-weight:700;letter-spacing:.02em}
+  .brand .dot{width:9px;height:9px;border-radius:50%;background:var(--text);box-shadow:0 0 12px rgba(255,255,255,.7)}
+  nav .links{display:flex;gap:6px;margin-left:auto;align-items:center}
+  nav a.tab{padding:8px 14px;border-radius:8px;color:var(--muted);font-size:14px;font-weight:500;border:1px solid transparent}
+  nav a.tab:hover{color:var(--text);background:rgba(255,255,255,.04)}
+  nav a.tab.on{color:var(--text);background:rgba(255,255,255,.06);border-color:var(--line)}
+
+  /* ---- shared bits ---- */
+  .pill{display:inline-flex;align-items:center;gap:8px;padding:6px 14px;border-radius:9999px;
+        background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.1);font-size:12.5px;color:var(--muted);font-weight:500}
+  .pill .d{width:6px;height:6px;border-radius:50%;background:var(--good);box-shadow:0 0 8px var(--good)}
+  .btn{display:inline-flex;align-items:center;gap:9px;padding:11px 20px;border-radius:10px;font-weight:600;font-size:14.5px;
+       border:1px solid var(--line-lit);background:rgba(255,255,255,.02);color:var(--text);cursor:pointer;transition:.15s}
+  .btn:hover{background:rgba(255,255,255,.07);border-color:rgba(255,255,255,.32)}
+  .btn.solid{background:var(--text);color:#000;border-color:var(--text)}
+  .btn.solid:hover{background:#e6e6e6}
+  .card{background:linear-gradient(180deg,var(--panel),var(--panel-2));border:1px solid var(--line);border-radius:14px;position:relative}
+  .card .corner{position:absolute;width:10px;height:10px;border:1px solid var(--line-lit);opacity:.6}
+  .card .corner.tl{top:-1px;left:-1px;border-right:0;border-bottom:0}
+  .card .corner.tr{top:-1px;right:-1px;border-left:0;border-bottom:0}
+  .card .corner.bl{bottom:-1px;left:-1px;border-right:0;border-top:0}
+  .card .corner.br{bottom:-1px;right:-1px;border-left:0;border-top:0}
+  .sec-head{display:flex;flex-direction:column;gap:12px;align-items:center;text-align:center;margin:0 auto 40px}
+  .sec-head h2{font-size:clamp(26px,4vw,40px)}
+  .sec-head p{color:var(--muted);max-width:620px;margin:0}
+  .reveal{opacity:0;transform:translateY(18px);transition:opacity .7s cubic-bezier(.2,.7,.2,1),transform .7s cubic-bezier(.2,.7,.2,1)}
+  .reveal.in{opacity:1;transform:none}
+
+  /* ---- routing ---- */
+  .route{display:none} .route.on{display:block}
+
+  /* ---- LANDING ---- */
+  .spot{position:absolute;top:0;left:0;right:0;height:min(1200px,120vh);z-index:0;pointer-events:none;overflow:hidden}
+  .spot .wash{position:absolute;top:-260px;left:50%;transform:translateX(-50%);width:min(2400px,240vw);height:min(1200px,120vh);
+       background:radial-gradient(70% 60% at 50% 4%,rgba(255,255,255,.16),rgba(255,255,255,.04) 54%,transparent 82%);filter:blur(28px);animation:pulse 9s ease-in-out infinite}
+  @keyframes pulse{0%,100%{opacity:.75}50%{opacity:1}}
+  .hero{position:relative;z-index:1;padding:96px 0 72px;text-align:center}
+  .hero h1{font-size:clamp(40px,7vw,78px);letter-spacing:-.02em}
+  .hero .lede{color:var(--muted);font-size:clamp(16px,2.2vw,20px);max-width:640px;margin:22px auto 0}
+  .hero .cta{display:flex;gap:12px;justify-content:center;margin-top:34px;flex-wrap:wrap}
+  .heroline{margin-top:46px;display:flex;gap:26px;justify-content:center;flex-wrap:wrap;color:var(--faint);font-size:13px}
+  .heroline b{color:var(--text);font-weight:600}
+  section{padding:68px 0;position:relative;z-index:1}
+  .bento{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
+  .module{padding:24px}
+  .module .m-ico{width:42px;height:42px;border-radius:11px;display:grid;place-items:center;border:1px solid var(--line-lit);margin-bottom:16px}
+  .module h3{font-size:18px;margin-bottom:8px}
+  .module p{color:var(--muted);font-size:14.5px;margin:0}
+  .m-ico svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+  .ic-a{color:var(--accent)} .ic-g{color:var(--good)} .ic-w{color:var(--warn)} .ic-v{color:var(--violet)} .ic-b{color:var(--bad)} .ic-c{color:#5bbdd8}
+  .steps{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
+  .step{padding:24px}
+  .step .n{font-family:var(--font-mono);font-size:13px;color:var(--faint);border:1px solid var(--line);border-radius:7px;padding:3px 9px;display:inline-block;margin-bottom:14px}
+  .step h3{font-size:17px;margin-bottom:6px}
+  .step p{color:var(--muted);font-size:14px;margin:0}
+  footer{border-top:1px solid var(--line-soft);padding:40px 0;color:var(--faint);font-size:13px;text-align:center;position:relative;z-index:1}
+
+  /* ---- APP (dashboard + query) ---- */
+  .apphead{padding:34px 0 8px}
+  .apphead h2{font-size:28px}
+  .apphead .sub{color:var(--muted);margin-top:6px;font-size:14.5px}
+  .gate{max-width:520px;margin:40px auto;padding:26px}
+  .gate label{display:block;font-size:13px;color:var(--muted);margin:14px 0 6px}
+  .inp{width:100%;padding:11px 13px;background:#060606;border:1px solid var(--line);border-radius:9px;color:var(--text);font-family:var(--font-mono);font-size:14px}
+  .inp:focus{outline:none;border-color:var(--line-lit)}
+  .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  .grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
+  .stat{padding:18px 20px}
+  .stat .k{color:var(--faint);font-size:12px;text-transform:uppercase;letter-spacing:.08em}
+  .stat .v{font-size:30px;font-weight:700;margin-top:4px;font-family:var(--font-mono)}
+  .panel{padding:20px}
+  .panel h3{font-size:15px;margin-bottom:14px;display:flex;align-items:center;gap:9px}
+  .panel h3 .tag{margin-left:auto;font-size:11px;color:var(--faint);font-family:var(--font-mono);font-weight:500}
+  table{width:100%;border-collapse:collapse;font-size:13.5px}
+  th{text-align:left;color:var(--faint);font-weight:500;font-size:11px;text-transform:uppercase;letter-spacing:.06em;padding:0 10px 9px;border-bottom:1px solid var(--line-soft)}
+  td{padding:9px 10px;border-bottom:1px solid var(--line-soft)}
+  tr:last-child td{border-bottom:0}
+  td.num{text-align:right;font-family:var(--font-mono);color:var(--muted)}
+  .who{display:flex;align-items:center;gap:9px;min-width:0}
+  .who img{width:26px;height:26px;border-radius:50%;background:#1a1a1a;flex:none}
+  .who .nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .noav{width:26px;height:26px;border-radius:50%;background:#1a1a1a;display:inline-block;flex:none}
+  .clip{max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .bar{height:6px;border-radius:4px;background:linear-gradient(90deg,var(--accent),#8ec5ff);opacity:.85}
+  .chip{display:inline-flex;align-items:center;gap:6px;padding:3px 9px;border-radius:7px;background:rgba(255,255,255,.03);border:1px solid var(--line);font-size:12px;color:var(--muted);font-family:var(--font-mono)}
+  .badge{font-size:11px;padding:2px 7px;border-radius:6px;font-family:var(--font-mono);border:1px solid}
+  .badge.alt{color:var(--warn);border-color:rgba(214,165,87,.4);background:rgba(214,165,87,.08)}
+  .empty{color:var(--faint);text-align:center;padding:26px;font-size:14px}
+  .searchbar{display:flex;gap:10px;margin:8px 0 22px}
+  .searchbar input{flex:1;padding:15px 18px;font-size:16px}
+  .prof-hero{display:flex;gap:20px;align-items:center;padding:24px}
+  .prof-hero .av{width:84px;height:84px;border-radius:20px;background:#141414;border:1px solid var(--line);flex:none;object-fit:cover}
+  .prof-hero .nm{font-size:26px;font-weight:700}
+  .prof-hero .id{font-family:var(--font-mono);color:var(--faint);font-size:13px;margin-top:2px}
+  .prof-hero .meta{display:flex;gap:18px;margin-top:10px;flex-wrap:wrap;color:var(--muted);font-size:13px}
+  .tl{list-style:none;margin:0;padding:0}
+  .tl li{display:flex;gap:12px;padding:8px 0;border-bottom:1px solid var(--line-soft);font-size:13.5px}
+  .tl li:last-child{border-bottom:0}
+  .tl .t{font-family:var(--font-mono);color:var(--faint);font-size:12px;min-width:130px}
+  .spin{display:inline-block;width:15px;height:15px;border:2px solid var(--line-lit);border-top-color:var(--text);border-radius:50%;animation:sp .7s linear infinite}
+  @keyframes sp{to{transform:rotate(360deg)}}
+  @media(max-width:820px){.bento,.steps,.grid3{grid-template-columns:1fr}.grid2{grid-template-columns:1fr}nav .links a.tab.hidem{display:none}}
+</style>
+</head>
+<body>
+<canvas id="bg"></canvas>
+
+<nav><div class="wrap">
+  <a class="brand" href="#/"><span class="dot"></span> Xicord</a>
+  <div class="links">
+    <a class="tab" data-r="/" href="#/">Overview</a>
+    <a class="tab" data-r="/query" href="#/query">Query</a>
+    <a class="tab" data-r="/dashboard" href="#/dashboard">Dashboard</a>
+    <a class="tab hidem" data-r="/settings" href="#/settings">Settings</a>
+  </div>
+</div></nav>
+
+<!-- ============ LANDING ============ -->
+<div class="route" data-route="/">
+  <div class="spot"><div class="wash"></div></div>
+  <header class="hero"><div class="wrap">
+    <span class="pill"><span class="d"></span> relationship intelligence for Discord</span>
+    <h1 class="grad" style="margin-top:22px">See who knows whom.</h1>
+    <p class="lede">Xicord quietly maps the voice calls, mutual friendships, shared servers and name history around the people you track — then lets you pull a full profile on anyone with one query.</p>
+    <div class="cta">
+      <a class="btn solid" href="#/query">Run a query →</a>
+      <a class="btn" href="#/dashboard">Open dashboard</a>
+    </div>
+    <div class="heroline">
+      <span><b id="hl-people">—</b> people mapped</span>
+      <span><b id="hl-pairs">—</b> call relationships</span>
+      <span><b id="hl-names">—</b> names resolved</span>
+    </div>
+  </div></header>
+
+  <section><div class="wrap">
+    <div class="sec-head reveal"><span class="pill">Capabilities</span><h2 class="grad">Everything it watches</h2>
+      <p>Each signal is built from what your clients actually observed and pooled — nothing scraped, nothing guessed.</p></div>
+    <div class="bento">
+      <div class="card module reveal"><i class="corner tl"></i><i class="corner br"></i>
+        <div class="m-ico ic-a"><svg viewBox="0 0 24 24"><path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3Z"/><path d="M5 12a7 7 0 0 0 14 0M12 19v3"/></svg></div>
+        <h3>Voice companions</h3><p>Who calls with whom, for how long, in which servers — ranked, over the whole history of every sweep.</p></div>
+      <div class="card module reveal"><i class="corner tl"></i><i class="corner br"></i>
+        <div class="m-ico ic-g"><svg viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v2"/><circle cx="10" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13A4 4 0 0 1 16 11"/></svg></div>
+        <h3>Who added whom</h3><p>Mutual-friend inversion turns "you can't see their friends" into a provable list of who added a target.</p></div>
+      <div class="card module reveal"><i class="corner tl"></i><i class="corner br"></i>
+        <div class="m-ico ic-w"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></div>
+        <h3>Alt-account signals</h3><p>Two identities that share companions but never once appear together are surfaced as possible alts.</p></div>
+      <div class="card module reveal"><i class="corner tl"></i><i class="corner br"></i>
+        <div class="m-ico ic-v"><svg viewBox="0 0 24 24"><path d="M4 4h16v4H4zM4 12h10v8H4zM18 12h2v8h-2z"/></svg></div>
+        <h3>Identity history</h3><p>Every username and avatar a person has worn, kept from the moment tracking starts — renames don't shed the past.</p></div>
+      <div class="card module reveal"><i class="corner tl"></i><i class="corner br"></i>
+        <div class="m-ico ic-c"><svg viewBox="0 0 24 24"><path d="M3 12h4l3 8 4-16 3 8h4"/></svg></div>
+        <h3>Session timelines</h3><p>Join/leave/move events across servers, streamed and pooled, so you can reconstruct when someone was where.</p></div>
+      <div class="card module reveal"><i class="corner tl"></i><i class="corner br"></i>
+        <div class="m-ico ic-b"><svg viewBox="0 0 24 24"><path d="M12 3l8 4v6c0 5-3.5 7.5-8 8-4.5-.5-8-3-8-8V7z"/></svg></div>
+        <h3>Cross-account pool</h3><p>Every machine and account contributes to one shared graph, so a person nobody's own client watched still shows up.</p></div>
+    </div>
+  </div></section>
+
+  <section><div class="wrap">
+    <div class="sec-head reveal"><span class="pill">How it works</span><h2 class="grad">Sweep · pool · query</h2></div>
+    <div class="steps">
+      <div class="card step reveal"><i class="corner tl"></i><i class="corner br"></i><span class="n">01</span><h3>Sweep</h3><p>Client plugins walk every loaded member list and prove mutual friendships, quietly and forever, across restarts.</p></div>
+      <div class="card step reveal"><i class="corner tl"></i><i class="corner br"></i><span class="n">02</span><h3>Pool</h3><p>Findings sync to one shared graph — highest-wins, per-account private layers, only meaningful (≥1 min) relationships shared.</p></div>
+      <div class="card step reveal"><i class="corner tl"></i><i class="corner br"></i><span class="n">03</span><h3>Query</h3><p>Ask by name, tag, or id and get a full profile assembled from the pool in one shot.</p></div>
+    </div>
+    <div style="text-align:center;margin-top:38px" class="reveal"><a class="btn solid" href="#/query">Try a query →</a></div>
+  </div></section>
+
+  <footer><div class="wrap">Xicord · private relationship-intelligence console · data stays in your pool</div></footer>
+</div>
+
+<!-- ============ QUERY ============ -->
+<div class="route" data-route="/query">
+  <div class="apphead"><div class="wrap">
+    <h2 class="grad">Query</h2><div class="sub">A display name, a user id, or a tag — returns a full profile from the pool.</div>
+  </div></div>
+  <div class="wrap" style="padding-bottom:80px">
+    <div id="q-need" style="display:none"></div>
+    <div id="q-ui" style="display:none">
+      <div class="searchbar">
+        <input id="q-input" class="inp mono" placeholder="id:1239350611800231956   ·   dn:mara   ·   @mara   ·   tag:mara#0001" autocomplete="off">
+        <button class="btn solid" id="q-go">Search</button>
+      </div>
+      <div class="faint" style="font-size:12px;margin:-14px 0 22px;font-family:var(--font-mono)">params — <b style="color:var(--muted)">id:</b>&lt;user id&gt; · <b style="color:var(--muted)">dn:</b>&lt;display name&gt; · <b style="color:var(--muted)">@</b>&lt;name&gt; · <b style="color:var(--muted)">tag:</b>&lt;name#0001&gt; · or just type</div>
+      <div id="q-out"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ DASHBOARD ============ -->
+<div class="route" data-route="/dashboard">
+  <div class="apphead"><div class="wrap">
+    <h2 class="grad">Dashboard</h2><div class="sub">The shared pool at a glance — voice, connections, and alt-account signals.</div>
+  </div></div>
+  <div class="wrap" style="padding-bottom:80px">
+    <div id="d-need" style="display:none"></div>
+    <div id="d-ui" style="display:none">
+      <div class="grid3" style="margin-bottom:16px">
+        <div class="card stat"><i class="corner tl"></i><i class="corner br"></i><div class="k">People mapped</div><div class="v" id="s-people">—</div></div>
+        <div class="card stat"><i class="corner tl"></i><i class="corner br"></i><div class="k">Call relationships</div><div class="v" id="s-pairs">—</div></div>
+        <div class="card stat"><i class="corner tl"></i><i class="corner br"></i><div class="k">Total voice time</div><div class="v" id="s-time">—</div></div>
+      </div>
+      <div class="grid2">
+        <div class="card panel"><i class="corner tl"></i><i class="corner br"></i><h3>Top by voice time <span class="tag">by total ms</span></h3><div id="p-voice"></div></div>
+        <div class="card panel"><i class="corner tl"></i><i class="corner br"></i><h3>Most connected <span class="tag">by companions</span></h3><div id="p-conn"></div></div>
+      </div>
+      <div class="grid2" style="margin-top:16px">
+        <div class="card panel"><i class="corner tl"></i><i class="corner br"></i><h3>Possible alternate accounts <span class="tag">shared, never together</span></h3><div id="p-alts"></div></div>
+        <div class="card panel"><i class="corner tl"></i><i class="corner br"></i><h3>Recent voice activity <span class="tag">newest first</span></h3><div id="p-recent"></div></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ SETTINGS ============ -->
+<div class="route" data-route="/settings">
+  <div class="apphead"><div class="wrap"><h2 class="grad">Settings</h2><div class="sub">Point the console at your sync server.</div></div></div>
+  <div class="wrap"><div class="card gate"><i class="corner tl"></i><i class="corner br"></i>
+    <label>Sync server URL</label><input id="cfg-base" class="inp" placeholder="https://xicord-sync-production.up.railway.app">
+    <label>Access token</label><input id="cfg-token" class="inp" type="password" placeholder="xic-…">
+    <div class="row" style="margin-top:18px">
+      <button class="btn solid" id="cfg-save">Save & connect</button>
+      <button class="btn" id="cfg-test">Test</button>
+      <span id="cfg-msg" class="muted" style="font-size:13px"></span>
+    </div>
+    <p class="faint" style="font-size:12px;margin-top:16px">Stored only in this browser (localStorage). The pool is fetched once and held in memory; profiles and dashboard views are computed here — nothing is sent anywhere.</p>
+  </div></div>
+</div>
+
+<script>
+/* ---------------- config + state ---------------- */
+var LS = { base:"xicord.base", token:"xicord.token" };
+var cfg = { base: localStorage.getItem(LS.base) || (location.origin && location.origin.slice(0,4)==="http" ? location.origin : "https://xicord-sync-production.up.railway.app"),
+            token: localStorage.getItem(LS.token) || "" };
+
+function esc(s){ return String(s==null?"":s).replace(/[&<>"']/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c];}); }
+function fmtN(n){ n=+n||0; return n>=1e6?(n/1e6).toFixed(1)+"M":n>=1e3?(n/1e3).toFixed(1)+"k":String(n); }
+function fmtDur(ms){ ms=+ms||0; var s=Math.floor(ms/1000),h=Math.floor(s/3600),m=Math.floor(s%3600/60); if(h>=24){var d=Math.floor(h/24);return d+"d "+(h%24)+"h";} return h?h+"h "+m+"m":m?m+"m":s+"s"; }
+function ago(t){ if(!t)return""; var s=Math.floor((Date.now()-t)/1000); if(s<60)return s+"s ago"; if(s<3600)return Math.floor(s/60)+"m ago"; if(s<86400)return Math.floor(s/3600)+"h ago"; return Math.floor(s/86400)+"d ago"; }
+
+function nameOf(o){ return (o&&o.username)||("user "+String((o&&o.id)||"").slice(0,6)); }
+function avatarOf(o,size){ if(!o)return""; var a=o.avatar||""; if(!a)return""; if(a.slice(0,4)==="http")return a; var ext=a.slice(0,2)==="a_"?"gif":"webp"; return "https://cdn.discordapp.com/avatars/"+o.id+"/"+a+"."+ext+"?size="+(size||32); }
+function avImg(o,size){ var a=avatarOf(o,size); return a?'<img loading="lazy" decoding="async" width="'+(size||26)+'" height="'+(size||26)+'" style="border-radius:50%" src="'+esc(a)+'" alt="">':'<span class="noav"></span>'; }
+function personRow(o){ return '<a class="who" style="cursor:pointer" data-jump="'+esc(o.id)+'">'+avImg(o,32)+'<span class="nm clip">'+esc(nameOf(o))+'</span></a>'; }
+
+/* ---------------- data: small server endpoints ---------------- */
+function haveCfg(){ return !!(cfg.base && cfg.token); }
+function api(path){
+  return fetch(cfg.base.replace(/\/+$/,"")+path, { headers:{ Authorization:"Bearer "+cfg.token }, cache:"no-store" })
+    .then(function(r){ if(r.status===503) throw new Error("server busy — try again in a moment"); if(r.status===404) return r.json().then(function(j){ return {__404:true, j:j}; }); if(!r.ok) throw new Error("HTTP "+r.status); return r.json(); });
+}
+
+/* ---------------- query ---------------- */
+function runQuery(q){
+  q=(q||"").trim(); var out=document.getElementById("q-out");
+  if(!q){ out.innerHTML=""; return; }
+  out.innerHTML='<div class="empty"><span class="spin"></span></div>';
+  api("/v1/profile?q="+encodeURIComponent(q)).then(function(d){
+    if(d.__404){ out.innerHTML='<div class="empty">No one in the pool matches "'+esc(q)+'".</div>'; return; }
+    if(d.matches){ renderMatches(d.matches); return; }
+    renderProfile(d);
+  }).catch(function(e){ out.innerHTML='<div class="empty">'+esc(e.message)+'. Check <a href="#/settings" style="color:var(--accent)">Settings</a>.</div>'; });
+}
+function renderMatches(list){
+  var out=['<div class="card panel"><i class="corner tl"></i><i class="corner br"></i><h3>'+list.length+' matches — pick one</h3>'];
+  list.forEach(function(o){ out.push('<div class="row" style="justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--line-soft)">'+personRow(o)+'<span class="chip">'+esc(o.id)+'</span></div>'); });
+  out.push('</div>'); document.getElementById("q-out").innerHTML=out.join("");
+}
+function renderProfile(p){
+  var out=[];
+  out.push('<div class="card prof-hero"><i class="corner tl"></i><i class="corner br"></i>'+
+    (avatarOf(p,128)?'<img class="av" loading="lazy" decoding="async" src="'+esc(avatarOf(p,128))+'">':'<span class="av"></span>')+
+    '<div><div class="nm">'+esc(nameOf(p))+'</div><div class="id">'+esc(p.id)+'</div>'+
+    '<div class="meta"><span>'+(p.companionCount||0)+' companions</span><span>'+fmtDur(p.totalMs)+' in voice</span>'+
+    '<span>'+((p.guilds||[]).length)+' servers</span>'+(p.first?'<span>first seen '+ago(p.first)+'</span>':'')+(p.last?'<span>last '+ago(p.last)+'</span>':'')+'</div></div></div>');
+
+  out.push('<div class="grid2" style="margin-top:16px">');
+  var comps=p.companions||[]; var max=comps.length?comps[0].ms:1;
+  out.push('<div class="card panel"><i class="corner tl"></i><i class="corner br"></i><h3>Voice companions <span class="tag">'+(p.companionCount||comps.length)+'</span></h3>');
+  if(!comps.length) out.push('<div class="empty">No pooled calls for this person.</div>');
+  else{ out.push('<table><thead><tr><th>Person</th><th style="width:34%">Time together</th><th>Calls</th></tr></thead><tbody>');
+    comps.forEach(function(c){ out.push('<tr><td>'+personRow(c)+'</td><td><div class="bar" style="width:'+Math.max(4,Math.round(c.ms/max*100))+'%"></div><span class="faint" style="font-size:11px">'+fmtDur(c.ms)+'</span></td><td class="num">'+c.count+'</td></tr>'); });
+    out.push('</tbody></table>'); }
+  out.push('</div>');
+
+  out.push('<div style="display:flex;flex-direction:column;gap:16px">');
+  out.push('<div class="card panel"><i class="corner tl"></i><i class="corner br"></i><h3>Possible alternate accounts <span class="tag">shared, never together</span></h3>');
+  var alts=p.alts||[];
+  if(!alts.length) out.push('<div class="empty">Nothing meets the bar.</div>');
+  else alts.forEach(function(a){ out.push('<div class="row" style="justify-content:space-between;padding:7px 0;border-bottom:1px solid var(--line-soft)">'+personRow(a)+'<span class="badge alt">'+a.shared+' shared</span></div>'); });
+  out.push('</div>');
+  out.push('<div class="card panel"><i class="corner tl"></i><i class="corner br"></i><h3>Added / mutual friends <span class="tag">'+(p.friendCount||(p.friends||[]).length)+'</span></h3>');
+  var fr=p.friends||[];
+  if(!fr.length) out.push('<div class="empty">No proven friendships in the pool.</div>');
+  else{ out.push('<div class="row" style="gap:7px">'); fr.forEach(function(f){ out.push('<a class="chip" style="cursor:pointer" data-jump="'+esc(f.id)+'">'+esc(nameOf(f))+'</a>'); }); out.push('</div>'); }
+  out.push('</div></div></div>');
+
+  var vc=p.voice||[];
+  if(vc.length){ var ev=vc.slice().sort(function(a,b){return b.at-a.at;}).slice(0,40);
+    out.push('<div class="card panel" style="margin-top:16px"><i class="corner tl"></i><i class="corner br"></i><h3>Voice timeline <span class="tag">'+vc.length+' events</span></h3><ul class="tl">');
+    ev.forEach(function(e){ var txt=e.act==="joined"?"joined a channel":e.act==="left"?"left":"moved channel"; out.push('<li><span class="t">'+esc(new Date(e.at).toLocaleString())+'</span><span>'+txt+'</span></li>'); });
+    out.push('</ul></div>'); }
+  document.getElementById("q-out").innerHTML=out.join("");
+}
+
+/* ---------------- dashboard ---------------- */
+function renderDashboard(){
+  api("/v1/summary").then(function(d){
+    document.getElementById("s-people").textContent=fmtN(d.people);
+    document.getElementById("s-pairs").textContent=fmtN(d.pairs);
+    document.getElementById("s-time").textContent=fmtDur(d.totalMs);
+    var maxV=(d.topVoice[0]||{}).ms||1;
+    document.getElementById("p-voice").innerHTML='<table><tbody>'+d.topVoice.map(function(t){return '<tr><td>'+personRow(t)+'</td><td style="width:46%"><div class="bar" style="width:'+Math.max(4,Math.round(t.ms/maxV*100))+'%"></div></td><td class="num">'+fmtDur(t.ms)+'</td></tr>';}).join("")+'</tbody></table>';
+    document.getElementById("p-conn").innerHTML='<table><tbody>'+d.topConnected.map(function(t){return '<tr><td>'+personRow(t)+'</td><td class="num">'+t.deg+' companions</td></tr>';}).join("")+'</tbody></table>';
+    document.getElementById("p-alts").innerHTML= d.alts.length? d.alts.map(function(p){return '<div class="row" style="justify-content:space-between;padding:7px 0;border-bottom:1px solid var(--line-soft)"><span class="clip">'+esc(nameOf(p.a))+'</span><span class="faint">~</span><span class="clip">'+esc(nameOf(p.b))+'</span><span class="badge alt">'+p.shared+'</span></div>';}).join("") : '<div class="empty">No strong alt signals among the top-connected.</div>';
+    document.getElementById("p-recent").innerHTML= d.recent.length? '<ul class="tl">'+d.recent.map(function(r){var t=r.act==="joined"?"joined":r.act==="left"?"left":"moved";return '<li><span class="t">'+esc(ago(r.at))+'</span><span>'+esc(nameOf(r))+' '+t+'</span></li>';}).join("")+'</ul>' : '<div class="empty">No pooled voice timeline yet.</div>';
+  }).catch(function(e){ var n=document.getElementById("d-need"); n.style.display="block"; n.innerHTML='<div class="empty">'+esc(e.message)+'. Check <a href="#/settings" style="color:var(--accent)">Settings</a>.</div>'; document.getElementById("d-ui").style.display="none"; });
+}
+
+function landingCounts(){ if(!haveCfg())return; api("/v1/summary").then(function(d){
+  document.getElementById("hl-people").textContent=fmtN(d.people);
+  document.getElementById("hl-pairs").textContent=fmtN(d.pairs);
+  document.getElementById("hl-names").textContent=fmtN(d.people);
+}).catch(function(){}); }
+
+/* ---------------- gates ---------------- */
+function needCfgHTML(where){ return '<div class="card gate"><i class="corner tl"></i><i class="corner br"></i><h3 style="margin-bottom:6px">Connect your pool</h3><p class="muted" style="margin-top:0;font-size:14px">'+where+' needs your sync server URL and token.</p><a class="btn solid" href="#/settings" style="margin-top:14px">Open settings →</a></div>'; }
+
+/* ---------------- router ---------------- */
+function setRoute(r){
+  document.querySelectorAll(".route").forEach(function(el){ el.classList.toggle("on", el.getAttribute("data-route")===r); });
+  document.querySelectorAll("nav a.tab").forEach(function(a){ a.classList.toggle("on", a.getAttribute("data-r")===r); });
+  window.scrollTo(0,0);
+  if(r==="/") { landingCounts(); armReveal(); }
+  if(r==="/query"){ if(!haveCfg()){ document.getElementById("q-need").style.display="block"; document.getElementById("q-need").innerHTML=needCfgHTML("Query"); document.getElementById("q-ui").style.display="none"; } else { document.getElementById("q-need").style.display="none"; document.getElementById("q-ui").style.display="block"; document.getElementById("q-input").focus(); } }
+  if(r==="/dashboard"){ if(!haveCfg()){ document.getElementById("d-need").style.display="block"; document.getElementById("d-need").innerHTML=needCfgHTML("The dashboard"); document.getElementById("d-ui").style.display="none"; } else { document.getElementById("d-need").style.display="none"; document.getElementById("d-ui").style.display="block"; renderDashboard(); } }
+}
+function route(){ var h=(location.hash||"#/").slice(1); if(!h||h[0]!=="/") h="/"; if(!document.querySelector('.route[data-route="'+h+'"]')) h="/"; setRoute(h); }
+window.addEventListener("hashchange", route);
+
+/* jump-to-person links (event delegation) */
+document.addEventListener("click", function(e){
+  var j=e.target.closest("[data-jump]"); if(j){ e.preventDefault(); var id=j.getAttribute("data-jump"); location.hash="#/query"; setTimeout(function(){ document.getElementById("q-input").value=id; runQuery(id); },0); }
+});
+
+/* settings */
+document.getElementById("cfg-base").value=cfg.base; document.getElementById("cfg-token").value=cfg.token;
+document.getElementById("cfg-save").onclick=function(){ cfg.base=document.getElementById("cfg-base").value.trim(); cfg.token=document.getElementById("cfg-token").value.trim(); localStorage.setItem(LS.base,cfg.base); localStorage.setItem(LS.token,cfg.token); POOL=null; loading=null; CIDX=null; document.getElementById("cfg-msg").textContent="saved."; };
+document.getElementById("cfg-test").onclick=function(){ var m=document.getElementById("cfg-msg"); m.innerHTML='<span class="spin"></span>'; cfg.base=document.getElementById("cfg-base").value.trim(); cfg.token=document.getElementById("cfg-token").value.trim(); POOL=null;loading=null;CIDX=null; loadPool().then(function(){ m.textContent="connected — "+fmtN(Object.keys(POOL.calls).length)+" relationships."; }).catch(function(e){ m.textContent="failed: "+e.message; }); };
+
+/* query controls */
+document.getElementById("q-go").onclick=function(){ runQuery(document.getElementById("q-input").value); };
+document.getElementById("q-input").addEventListener("keydown",function(e){ if(e.key==="Enter") runQuery(this.value); });
+
+/* reveal-on-scroll */
+var io;
+function armReveal(){ if(!("IntersectionObserver" in window)){ document.querySelectorAll(".reveal").forEach(function(el){el.classList.add("in");}); return; }
+  if(!io) io=new IntersectionObserver(function(es){ es.forEach(function(en){ if(en.isIntersecting){ en.target.classList.add("in"); io.unobserve(en.target);} }); },{threshold:.12});
+  document.querySelectorAll(".reveal:not(.in)").forEach(function(el){ io.observe(el); }); }
+
+/* bg waves */
+(function(){ var c=document.getElementById("bg"); var gl=c.getContext("webgl",{alpha:false,antialias:false}); if(!gl){c.style.background="#000";return;}
+  var VS="attribute vec2 p;void main(){gl_Position=vec4(p,0.,1.);}";
+  var FS="precision highp float;uniform vec2 uRes;uniform float uT;void main(){vec2 uv=gl_FragCoord.xy/uRes.xy;float a=uRes.x/uRes.y;vec2 p=vec2(uv.x*a,uv.y);float v=0.;for(int i=0;i<4;i++){float f=float(i);vec2 s=vec2(.5*a+sin(uT*.06+f*2.3)*.72*a,.5+cos(uT*.05+f*1.9)*.62);float d=distance(p,s);v+=sin(d*8.-uT*(.6+f*.1)-f*2.)*(.45+.55*exp(-d*.5));}v/=4.;float cr=smoothstep(.34,.94,.5+.5*v);gl_FragColor=vec4(vec3(cr*.05),1.);}";
+  function sh(t,s){var x=gl.createShader(t);gl.shaderSource(x,s);gl.compileShader(x);return x;}
+  var pr=gl.createProgram();gl.attachShader(pr,sh(gl.VERTEX_SHADER,VS));gl.attachShader(pr,sh(gl.FRAGMENT_SHADER,FS));gl.linkProgram(pr);gl.useProgram(pr);
+  var b=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,b);gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1,3,-1,-1,3]),gl.STATIC_DRAW);
+  var l=gl.getAttribLocation(pr,"p");gl.enableVertexAttribArray(l);gl.vertexAttribPointer(l,2,gl.FLOAT,false,0,0);
+  var uR=gl.getUniformLocation(pr,"uRes"),uT=gl.getUniformLocation(pr,"uT");
+  function rs(){var s=.5,w=Math.max(1,Math.round(innerWidth*s)),h=Math.max(1,Math.round(innerHeight*s));c.width=w;c.height=h;gl.viewport(0,0,w,h);gl.uniform2f(uR,w,h);}
+  addEventListener("resize",rs);rs(); var st=performance.now(),run=true;
+  function loop(n){ if(!run)return; gl.uniform1f(uT,(n-st)/1000); gl.drawArrays(gl.TRIANGLES,0,3); requestAnimationFrame(loop); }
+  if(matchMedia("(prefers-reduced-motion: reduce)").matches){ gl.uniform1f(uT,6);gl.drawArrays(gl.TRIANGLES,0,3);} else { requestAnimationFrame(loop); document.addEventListener("visibilitychange",function(){run=!document.hidden; if(run){st=performance.now();requestAnimationFrame(loop);}}); }
+})();
+
+route();
+</script>
+</body>
+</html>

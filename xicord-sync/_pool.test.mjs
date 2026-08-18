@@ -25,6 +25,7 @@ process.env.XICORD_TOKENS = [
 ].join(",");
 
 const pool = require(join(here, "pool.js"));
+process.env.XICORD_POOL_MIN_MS = "0"; // these tests exercise merge/sanitize with tiny fixtures
 const srv = require(join(here, "server.js"));
 
 let pass = 0, fail = 0;
@@ -57,8 +58,8 @@ ok("a contributor with no first-seen does not zero it", m.people[P].first === 50
 console.log("\n-- a pair has exactly one key, however it arrives --");
 const dirty = pool.sanitizePool({
     calls: {
-        [`${Q}|${P}`]: { ms: 100, count: 1, last: 1, guilds: [G1] },   // unsorted
-        [`${P}|${Q}`]: { ms: 500, count: 2, last: 9, guilds: [G2] },   // sorted
+        [`${Q}|${P}`]: { ms: 100, count: 1, last: 1, guilds: [G1] }, // unsorted
+        [`${P}|${Q}`]: { ms: 500, count: 2, last: 9, guilds: [G2] }, // sorted
         [`${P}|${P}`]: { ms: 1 },                                      // self-pair
         "not|ids": { ms: 1 }
     },

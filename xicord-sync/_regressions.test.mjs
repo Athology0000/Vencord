@@ -34,7 +34,7 @@ function start(extraEnv = {}) {
         cwd: HERE,
         env: {
             ...process.env, DATA_DIR: dir, PORT: String(PORT),
-            XICORD_TOKENS: "", XICORD_ALIASES: "",
+            XICORD_TOKENS: "", XICORD_ALIASES: "", XICORD_POOL_MIN_MS: "0",
             XICORD_SMALL_SLICE_BYTES: "300",   // so the append-log path is what runs
             XICORD_MAX_LOG_BYTES: "700",
             ...extraEnv

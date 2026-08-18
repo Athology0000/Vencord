@@ -1,0 +1,1310 @@
+{
+  "xicordCache": 1,
+  "exportedAt": 1786043029336,
+  "self": {
+    "id": "u0",
+    "username": "mara"
+  },
+  "users": {
+    "u0": {
+      "username": "mara",
+      "avatar": ""
+    },
+    "u1": {
+      "username": "kettle",
+      "avatar": ""
+    },
+    "u2": {
+      "username": "juno_x",
+      "avatar": ""
+    },
+    "u3": {
+      "username": "pixel",
+      "avatar": ""
+    },
+    "u4": {
+      "username": "0range",
+      "avatar": ""
+    },
+    "u5": {
+      "username": "vlad",
+      "avatar": ""
+    },
+    "u6": {
+      "username": "sy",
+      "avatar": ""
+    },
+    "u7": {
+      "username": "nova",
+      "avatar": ""
+    },
+    "u8": {
+      "username": "gremlin",
+      "avatar": ""
+    },
+    "u9": {
+      "username": "toast",
+      "avatar": ""
+    },
+    "u10": {
+      "username": "echo",
+      "avatar": ""
+    },
+    "u11": {
+      "username": "riven",
+      "avatar": ""
+    }
+  },
+  "channels": {
+    "c1": {
+      "name": "general vc",
+      "guildId": "g1"
+    },
+    "c2": {
+      "name": "gaming",
+      "guildId": "g1"
+    },
+    "c3": {
+      "name": "music",
+      "guildId": "g1"
+    },
+    "c4": {
+      "name": "focus room",
+      "guildId": "g2"
+    },
+    "c5": {
+      "name": "lounge",
+      "guildId": "g2"
+    },
+    "c6": {
+      "name": "chat",
+      "guildId": "g1"
+    }
+  },
+  "guilds": {
+    "g1": {
+      "name": "The Basement"
+    },
+    "g2": {
+      "name": "Study Hall"
+    }
+  },
+  "history": [
+    {
+      "userId": "u3",
+      "channelId": "c4",
+      "guildId": "g2",
+      "join": 1786052446061,
+      "leave": 1786060006061
+    },
+    {
+      "userId": "u2",
+      "channelId": "c5",
+      "guildId": "g2",
+      "join": 1786038579124,
+      "leave": 1786046859124
+    },
+    {
+      "userId": "u4",
+      "channelId": "c4",
+      "guildId": "g2",
+      "join": 1786012487537,
+      "leave": 1786015307537
+    },
+    {
+      "userId": "u9",
+      "channelId": "c5",
+      "guildId": "g2",
+      "join": 1785956800819,
+      "leave": 1785962140819
+    },
+    {
+      "userId": "u4",
+      "channelId": "c2",
+      "guildId": "g1",
+      "join": 1785851707407,
+      "leave": 1785861367407
+    },
+    {
+      "userId": "u5",
+      "channelId": "c3",
+      "guildId": "g1",
+      "join": 1785870621815,
+      "leave": 1785872601815
+    },
+    {
+      "userId": "u3",
+      "channelId": "c2",
+      "guildId": "g1",
+      "join": 1785859102707,
+      "leave": 1785864442707
+    },
+    {
+      "userId": "u9",
+      "channelId": "c2",
+      "guildId": "g1",
+      "join": 1785855144372,
+      "leave": 1785864264372
+    },
+    {
+      "userId": "u6",
+      "channelId": "c5",
+      "guildId": "g2",
+      "join": 1785776799840,
+      "leave": 1785783459840
+    },
+    {
+      "userId": "u4",
+      "channelId": "c4",
+      "guildId": "g2",
+      "join": 1785583376175,
+      "leave": 1785587996175
+    },
+    {
+      "userId": "u5",
+      "channelId": "c5",
+      "guildId": "g2",
+      "join": 1785592882059,
+      "leave": 1785595882059
+    },
+    {
+      "userId": "u1",
+      "channelId": "c4",
+      "guildId": "g2",
+      "join": 1785572230538,
+      "leave": 1785575530538
+    },
+    {
+      "userId": "u5",
+      "channelId": "c2",
+      "guildId": "g1",
+      "join": 1785612525747,
+      "leave": 1785618585747
+    },
+    {
+      "userId": "u7",
+      "channelId": "c4",
+      "guildId": "g2",
+      "join": 1785486794668,
+      "leave": 1785491894668
+    },
+    {
+      "userId": "u6",
+      "channelId": "c4",
+      "guildId": "g2",
+      "join": 1785500956943,
+      "leave": 1785511516943
+    },
+    {
+      "userId": "u2",
+      "channelId": "c3",
+      "guildId": "g1",
+      "join": 1785530194399,
+      "leave": 1785530614399
+    },
+    {
+      "userId": "u7",
+      "channelId": "c4",
+      "guildId": "g2",
+      "join": 1785505696831,
+      "leave": 1785513376831
+    },
+    {
+      "userId": "u3",
+      "channelId": "c4",
+      "guildId": "g2",
+      "join": 1785533374196,
+      "leave": 1785535714196
+    },
+    {
+      "userId": "u8",
+      "channelId": "c5",
+      "guildId": "g2",
+      "join": 1785429694944,
+      "leave": 1785430894944
+    },
+    {
+      "userId": "u11",
+      "channelId": "c1",
+      "guildId": "g1",
+      "join": 1785410831608,
+      "leave": 1785419771608
+    },
+    {
+      "userId": "u3",
+      "channelId": "c5",
+      "guildId": "g2",
+      "join": 1785412096751,
+      "leave": 1785416776751
+    },
+    {
+      "userId": "u0",
+      "channelId": "c2",
+      "guildId": "g1",
+      "join": 1785347374517,
+      "leave": 1785356194517
+    },
+    {
+      "userId": "u11",
+      "channelId": "c3",
+      "guildId": "g1",
+      "join": 1785356306263,
+      "leave": 1785356666263
+    },
+    {
+      "userId": "u6",
+      "channelId": "c4",
+      "guildId": "g2",
+      "join": 1785260419187,
+      "leave": 1785265939187
+    },
+    {
+      "userId": "u11",
+      "channelId": "c4",
+      "guildId": "g2",
+      "join": 1785144851035,
+      "leave": 1785147431035
+    },
+    {
+      "userId": "u8",
+      "channelId": "c3",
+      "guildId": "g1",
+      "join": 1785156066249,
+      "leave": 1785160146249
+    },
+    {
+      "userId": "u4",
+      "channelId": "c2",
+      "guildId": "g1",
+      "join": 1785154027465,
+      "leave": 1785160147465
+    },
+    {
+      "userId": "u8",
+      "channelId": "c3",
+      "guildId": "g1",
+      "join": 1785095280064,
+      "leave": 1785099000064
+    },
+    {
+      "userId": "u5",
+      "channelId": "c3",
+      "guildId": "g1",
+      "join": 1785059593914,
+      "leave": 1785063613914
+    },
+    {
+      "userId": "u0",
+      "channelId": "c4",
+      "guildId": "g2",
+      "join": 1785071148579,
+      "leave": 1785072828579
+    },
+    {
+      "userId": "u1",
+      "channelId": "c1",
+      "guildId": "g1",
+      "join": 1785091357403,
+      "leave": 1785099217403
+    },
+    {
+      "userId": "u4",
+      "channelId": "c2",
+      "guildId": "g1",
+      "join": 1785077729584,
+      "leave": 1785081389584
+    },
+    {
+      "userId": "u4",
+      "channelId": "c5",
+      "guildId": "g2",
+      "join": 1784891698331,
+      "leave": 1784898238331
+    },
+    {
+      "userId": "u11",
+      "channelId": "c2",
+      "guildId": "g1",
+      "join": 1784917098160,
+      "leave": 1784926218160
+    },
+    {
+      "userId": "u3",
+      "channelId": "c3",
+      "guildId": "g1",
+      "join": 1784917892211,
+      "leave": 1784925692211
+    },
+    {
+      "userId": "u8",
+      "channelId": "c2",
+      "guildId": "g1",
+      "join": 1784886369922,
+      "leave": 1784886969922
+    },
+    {
+      "userId": "u1",
+      "channelId": "c3",
+      "guildId": "g1",
+      "join": 1784902915496,
+      "leave": 1784910715496
+    },
+    {
+      "userId": "u6",
+      "channelId": "c2",
+      "guildId": "g1",
+      "join": 1784816760861,
+      "leave": 1784823420861
+    },
+    {
+      "userId": "u3",
+      "channelId": "c5",
+      "guildId": "g2",
+      "join": 1784842613470,
+      "leave": 1784847233470
+    },
+    {
+      "userId": "u10",
+      "channelId": "c2",
+      "guildId": "g1",
+      "join": 1784795052275,
+      "leave": 1784799612275
+    },
+    {
+      "userId": "u11",
+      "channelId": "c1",
+      "guildId": "g1",
+      "join": 1784726561234,
+      "leave": 1784728661234
+    },
+    {
+      "userId": "u10",
+      "channelId": "c2",
+      "guildId": "g1",
+      "join": 1784756583542,
+      "leave": 1784767563542
+    },
+    {
+      "userId": "u9",
+      "channelId": "c3",
+      "guildId": "g1",
+      "join": 1784742822950,
+      "leave": 1784746422950
+    },
+    {
+      "userId": "u9",
+      "channelId": "c3",
+      "guildId": "g1",
+      "join": 1784738015102,
+      "leave": 1784739215102
+    },
+    {
+      "userId": "u10",
+      "channelId": "c4",
+      "guildId": "g2",
+      "join": 1784709562364,
+      "leave": 1784712922364
+    },
+    {
+      "userId": "u8",
+      "channelId": "c5",
+      "guildId": "g2",
+      "join": 1784649193947,
+      "leave": 1784651653947
+    },
+    {
+      "userId": "u1",
+      "channelId": "c2",
+      "guildId": "g1",
+      "join": 1784666875782,
+      "leave": 1784670055782
+    },
+    {
+      "userId": "u3",
+      "channelId": "c5",
+      "guildId": "g2",
+      "join": 1784659309979,
+      "leave": 1784667169979
+    },
+    {
+      "userId": "u2",
+      "channelId": "c5",
+      "guildId": "g2",
+      "join": 1784663154301,
+      "leave": 1784665854301
+    },
+    {
+      "userId": "u4",
+      "channelId": "c3",
+      "guildId": "g1",
+      "join": 1784383425344,
+      "leave": 1784387205344
+    },
+    {
+      "userId": "u10",
+      "channelId": "c1",
+      "guildId": "g1",
+      "join": 1784276108003,
+      "leave": 1784284808003
+    },
+    {
+      "userId": "u5",
+      "channelId": "c4",
+      "guildId": "g2",
+      "join": 1784300814697,
+      "leave": 1784309814697
+    },
+    {
+      "userId": "u5",
+      "channelId": "c4",
+      "guildId": "g2",
+      "join": 1784305149281,
+      "leave": 1784306709281
+    },
+    {
+      "userId": "u6",
+      "channelId": "c4",
+      "guildId": "g2",
+      "join": 1784206957146,
+      "leave": 1784217937146
+    },
+    {
+      "userId": "u9",
+      "channelId": "c4",
+      "guildId": "g2",
+      "join": 1784200308407,
+      "leave": 1784207808407
+    },
+    {
+      "userId": "u11",
+      "channelId": "c3",
+      "guildId": "g1",
+      "join": 1784213896603,
+      "leave": 1784221456603
+    },
+    {
+      "userId": "u8",
+      "channelId": "c3",
+      "guildId": "g1",
+      "join": 1784130124752,
+      "leave": 1784138164752
+    },
+    {
+      "userId": "u3",
+      "channelId": "c2",
+      "guildId": "g1",
+      "join": 1784102980721,
+      "leave": 1784112460721
+    },
+    {
+      "userId": "u3",
+      "channelId": "c1",
+      "guildId": "g1",
+      "join": 1784023130632,
+      "leave": 1784032070632
+    },
+    {
+      "userId": "u7",
+      "channelId": "c5",
+      "guildId": "g2",
+      "join": 1784058196598,
+      "leave": 1784067436598
+    },
+    {
+      "userId": "u7",
+      "channelId": "c4",
+      "guildId": "g2",
+      "join": 1783936058773,
+      "leave": 1783940198773
+    },
+    {
+      "userId": "u8",
+      "channelId": "c3",
+      "guildId": "g1",
+      "join": 1783974471258,
+      "leave": 1783975071258
+    },
+    {
+      "userId": "u8",
+      "channelId": "c1",
+      "guildId": "g1",
+      "join": 1783940374496,
+      "leave": 1783944994496
+    },
+    {
+      "userId": "u5",
+      "channelId": "c1",
+      "guildId": "g1",
+      "join": 1783974379873,
+      "leave": 1783981459873
+    },
+    {
+      "userId": "u11",
+      "channelId": "c4",
+      "guildId": "g2",
+      "join": 1783966967746,
+      "leave": 1783969607746
+    },
+    {
+      "userId": "u0",
+      "channelId": "c1",
+      "guildId": "g1",
+      "join": 1783884289581,
+      "leave": 1783893889581
+    },
+    {
+      "userId": "u7",
+      "channelId": "c2",
+      "guildId": "g1",
+      "join": 1783850706098,
+      "leave": 1783857366098
+    },
+    {
+      "userId": "u6",
+      "channelId": "c4",
+      "guildId": "g2",
+      "join": 1783847798177,
+      "leave": 1783850918177
+    },
+    {
+      "userId": "u1",
+      "channelId": "c1",
+      "guildId": "g1",
+      "join": 1783847820579,
+      "leave": 1783857240579
+    },
+    {
+      "userId": "u10",
+      "channelId": "c1",
+      "guildId": "g1",
+      "join": 1783705244865,
+      "leave": 1783709984865
+    },
+    {
+      "userId": "u0",
+      "channelId": "c1",
+      "guildId": "g1",
+      "join": 1783680110138,
+      "leave": 1783689230138
+    },
+    {
+      "userId": "u2",
+      "channelId": "c3",
+      "guildId": "g1",
+      "join": 1783597586237,
+      "leave": 1783598066237
+    },
+    {
+      "userId": "u3",
+      "channelId": "c2",
+      "guildId": "g1",
+      "join": 1783603522625,
+      "leave": 1783608382625
+    },
+    {
+      "userId": "u0",
+      "channelId": "c1",
+      "guildId": "g1",
+      "join": 1783627494385,
+      "leave": 1783633374385
+    },
+    {
+      "userId": "u9",
+      "channelId": "c1",
+      "guildId": "g1",
+      "join": 1783498413190,
+      "leave": 1783508613190
+    },
+    {
+      "userId": "u9",
+      "channelId": "c2",
+      "guildId": "g1",
+      "join": 1783545481987,
+      "leave": 1783546741987
+    },
+    {
+      "userId": "u4",
+      "channelId": "c4",
+      "guildId": "g2",
+      "join": 1783520825540,
+      "leave": 1783526225540
+    },
+    {
+      "userId": "u7",
+      "channelId": "c3",
+      "guildId": "g1",
+      "join": 1783499625393,
+      "leave": 1783509405393
+    },
+    {
+      "userId": "u9",
+      "channelId": "c5",
+      "guildId": "g2",
+      "join": 1783517324659,
+      "leave": 1783519124659
+    },
+    {
+      "userId": "u3",
+      "channelId": "c3",
+      "guildId": "g1",
+      "join": 1783452543071,
+      "leave": 1783457163071
+    },
+    {
+      "userId": "u9",
+      "channelId": "c5",
+      "guildId": "g2",
+      "join": 1783434198857,
+      "leave": 1783439118857
+    },
+    {
+      "userId": "u9",
+      "channelId": "c3",
+      "guildId": "g1",
+      "join": 1783457867839,
+      "leave": 1783468547839
+    },
+    {
+      "userId": "u8",
+      "channelId": "c2",
+      "guildId": "g1",
+      "join": 1783260482779,
+      "leave": 1783269842779
+    },
+    {
+      "userId": "u3",
+      "channelId": "c1",
+      "guildId": "g1",
+      "join": 1783244985867,
+      "leave": 1783247085867
+    },
+    {
+      "userId": "u0",
+      "channelId": "c4",
+      "guildId": "g2",
+      "join": 1783256032565,
+      "leave": 1783258612565
+    },
+    {
+      "userId": "u4",
+      "channelId": "c2",
+      "guildId": "g1",
+      "join": 1783174341835,
+      "leave": 1783178841835
+    },
+    {
+      "userId": "u8",
+      "channelId": "c3",
+      "guildId": "g1",
+      "join": 1783190399795,
+      "leave": 1783198199795
+    },
+    {
+      "userId": "u11",
+      "channelId": "c4",
+      "guildId": "g2",
+      "join": 1783169065862,
+      "leave": 1783170385862
+    },
+    {
+      "userId": "u7",
+      "channelId": "c2",
+      "guildId": "g1",
+      "join": 1783173712879,
+      "leave": 1783184332879
+    },
+    {
+      "userId": "u6",
+      "channelId": "c4",
+      "guildId": "g2",
+      "join": 1783193245385,
+      "leave": 1783201525385
+    },
+    {
+      "userId": "u0",
+      "channelId": "c5",
+      "guildId": "g2",
+      "join": 1783072821005,
+      "leave": 1783077141005
+    },
+    {
+      "userId": "u4",
+      "channelId": "c1",
+      "guildId": "g1",
+      "join": 1783085287952,
+      "leave": 1783091707952
+    },
+    {
+      "userId": "u9",
+      "channelId": "c3",
+      "guildId": "g1",
+      "join": 1783068625285,
+      "leave": 1783069105285
+    },
+    {
+      "userId": "u0",
+      "channelId": "c2",
+      "guildId": "g1",
+      "join": 1782993853229,
+      "leave": 1782995593229
+    },
+    {
+      "userId": "u3",
+      "channelId": "c5",
+      "guildId": "g2",
+      "join": 1783011187690,
+      "leave": 1783015987690
+    },
+    {
+      "userId": "u10",
+      "channelId": "c1",
+      "guildId": "g1",
+      "join": 1783016810192,
+      "leave": 1783021850192
+    },
+    {
+      "userId": "u9",
+      "channelId": "c5",
+      "guildId": "g2",
+      "join": 1782909361950,
+      "leave": 1782911641950
+    },
+    {
+      "userId": "u5",
+      "channelId": "c3",
+      "guildId": "g1",
+      "join": 1782807552642,
+      "leave": 1782811212642
+    },
+    {
+      "userId": "u10",
+      "channelId": "c2",
+      "guildId": "g1",
+      "join": 1782815640916,
+      "leave": 1782824580916
+    },
+    {
+      "userId": "u10",
+      "channelId": "c4",
+      "guildId": "g2",
+      "join": 1782846534180,
+      "leave": 1782855594180
+    },
+    {
+      "userId": "u9",
+      "channelId": "c1",
+      "guildId": "g1",
+      "join": 1782660296428,
+      "leave": 1782670196428
+    },
+    {
+      "userId": "u7",
+      "channelId": "c2",
+      "guildId": "g1",
+      "join": 1782677822972,
+      "leave": 1782687842972
+    },
+    {
+      "userId": "u7",
+      "channelId": "c5",
+      "guildId": "g2",
+      "join": 1782669674265,
+      "leave": 1782679574265
+    },
+    {
+      "userId": "u9",
+      "channelId": "c2",
+      "guildId": "g1",
+      "join": 1782554966971,
+      "leave": 1782557366971
+    },
+    {
+      "userId": "u4",
+      "channelId": "c5",
+      "guildId": "g2",
+      "join": 1782564149647,
+      "leave": 1782566849647
+    },
+    {
+      "userId": "u3",
+      "channelId": "c4",
+      "guildId": "g2",
+      "join": 1782577503466,
+      "leave": 1782582543466
+    },
+    {
+      "userId": "u4",
+      "channelId": "c2",
+      "guildId": "g1",
+      "join": 1782561370579,
+      "leave": 1782569470579
+    },
+    {
+      "userId": "u3",
+      "channelId": "c1",
+      "guildId": "g1",
+      "join": 1782582580672,
+      "leave": 1782588220672
+    },
+    {
+      "userId": "u0",
+      "channelId": "c2",
+      "guildId": "g1",
+      "join": 1782485965248,
+      "leave": 1782495925248
+    },
+    {
+      "userId": "u9",
+      "channelId": "c1",
+      "guildId": "g1",
+      "join": 1782494881436,
+      "leave": 1782500341436
+    },
+    {
+      "userId": "u11",
+      "channelId": "c5",
+      "guildId": "g2",
+      "join": 1782504043195,
+      "leave": 1782514663195
+    },
+    {
+      "userId": "u1",
+      "channelId": "c4",
+      "guildId": "g2",
+      "join": 1782499980014,
+      "leave": 1782507300014
+    },
+    {
+      "userId": "u3",
+      "channelId": "c5",
+      "guildId": "g2",
+      "join": 1782405744486,
+      "leave": 1782413844486
+    },
+    {
+      "userId": "u2",
+      "channelId": "c2",
+      "guildId": "g1",
+      "join": 1782410238033,
+      "leave": 1782417258033
+    },
+    {
+      "userId": "u5",
+      "channelId": "c5",
+      "guildId": "g2",
+      "join": 1782333844703,
+      "leave": 1782339724703
+    },
+    {
+      "userId": "u1",
+      "channelId": "c5",
+      "guildId": "g2",
+      "join": 1782318466441,
+      "leave": 1782324106441
+    }
+  ],
+  "traits": [
+    {
+      "name": "Friend",
+      "url": "",
+      "users": [
+        "u1",
+        "u2",
+        "u3",
+        "u5"
+      ]
+    },
+    {
+      "name": "Mutual",
+      "url": "",
+      "users": [
+        "u2",
+        "u4",
+        "u6"
+      ]
+    }
+  ],
+  "targets": [
+    "u2"
+  ],
+  "hidden": [
+    "u8"
+  ],
+  "watched": [
+    "u1",
+    "u2"
+  ],
+  "ghosted": [
+    "u8"
+  ],
+  "watchlistRules": [],
+  "orbitLog": [
+    {
+      "userId": "u1",
+      "text": "kettle joined general vc",
+      "channelId": "c1",
+      "guildId": "g1",
+      "at": 1786039429336
+    }
+  ],
+  "mutuals": [
+    {
+      "userId": "u4",
+      "mutuals": [
+        "u1",
+        "u2"
+      ],
+      "at": 1786043029336
+    },
+    {
+      "userId": "u1",
+      "mutuals": [
+        "u3",
+        "u9"
+      ],
+      "at": 1786039429336
+    }
+  ],
+  "messages": {
+    "since": 1782587029336,
+    "daily": {
+      "2026-08-06": 26,
+      "2026-08-05": 36,
+      "2026-08-04": 36,
+      "2026-08-03": 10,
+      "2026-08-02": 31,
+      "2026-08-01": 29,
+      "2026-07-31": 2,
+      "2026-07-30": 10,
+      "2026-07-29": 23,
+      "2026-07-28": 24,
+      "2026-07-27": 16,
+      "2026-07-26": 3,
+      "2026-07-25": 20,
+      "2026-07-24": 17,
+      "2026-07-23": 14,
+      "2026-07-22": 8,
+      "2026-07-21": 21,
+      "2026-07-20": 36,
+      "2026-07-19": 2,
+      "2026-07-18": 27,
+      "2026-07-17": 33,
+      "2026-07-16": 4,
+      "2026-07-15": 25,
+      "2026-07-14": 37,
+      "2026-07-13": 30,
+      "2026-07-12": 31,
+      "2026-07-11": 12,
+      "2026-07-10": 13,
+      "2026-07-09": 15,
+      "2026-07-08": 14,
+      "2026-07-07": 16,
+      "2026-07-06": 33,
+      "2026-07-05": 4,
+      "2026-07-04": 36,
+      "2026-07-03": 9,
+      "2026-07-02": 35,
+      "2026-07-01": 29,
+      "2026-06-30": 21,
+      "2026-06-29": 30,
+      "2026-06-28": 21
+    },
+    "byUser": {
+      "u1": 299,
+      "u2": 275,
+      "u3": 121,
+      "u5": 81,
+      "u8": 35,
+      "u4": 33,
+      "u6": 50
+    },
+    "byChannel": {
+      "c1": 336,
+      "c2": 138,
+      "c6": 308,
+      "c5": 167,
+      "c3": 283
+    }
+  },
+  "presence": [
+    {
+      "userId": "u1",
+      "start": 1785351829336,
+      "end": 1785366829336
+    },
+    {
+      "userId": "u1",
+      "start": 1784574229336,
+      "end": 1784593009336
+    },
+    {
+      "userId": "u1",
+      "start": 1785524629336,
+      "end": 1785537889336
+    },
+    {
+      "userId": "u1",
+      "start": 1784833429336,
+      "end": 1784839249336
+    },
+    {
+      "userId": "u1",
+      "start": 1786043029336,
+      "end": 1786062229336
+    },
+    {
+      "userId": "u1",
+      "start": 1784228629336,
+      "end": 1784244709336
+    },
+    {
+      "userId": "u2",
+      "start": 1785006229336,
+      "end": 1785024469336
+    },
+    {
+      "userId": "u2",
+      "start": 1783883029336,
+      "end": 1783900549336
+    },
+    {
+      "userId": "u2",
+      "start": 1784228629336,
+      "end": 1784239909336
+    },
+    {
+      "userId": "u2",
+      "start": 1783796629336,
+      "end": 1783810669336
+    },
+    {
+      "userId": "u2",
+      "start": 1784142229336,
+      "end": 1784160049336
+    },
+    {
+      "userId": "u2",
+      "start": 1786043029336,
+      "end": 1786044829336
+    },
+    {
+      "userId": "u3",
+      "start": 1784833429336,
+      "end": 1784844049336
+    },
+    {
+      "userId": "u3",
+      "start": 1785956629336,
+      "end": 1785968209336
+    },
+    {
+      "userId": "u3",
+      "start": 1785524629336,
+      "end": 1785528409336
+    },
+    {
+      "userId": "u3",
+      "start": 1784055829336,
+      "end": 1784062549336
+    },
+    {
+      "userId": "u3",
+      "start": 1783883029336,
+      "end": 1783886809336
+    },
+    {
+      "userId": "u3",
+      "start": 1784747029336,
+      "end": 1784755849336
+    },
+    {
+      "userId": "u5",
+      "start": 1785697429336,
+      "end": 1785706369336
+    },
+    {
+      "userId": "u5",
+      "start": 1784228629336,
+      "end": 1784230849336
+    },
+    {
+      "userId": "u5",
+      "start": 1785524629336,
+      "end": 1785535069336
+    },
+    {
+      "userId": "u5",
+      "start": 1785438229336,
+      "end": 1785449029336
+    },
+    {
+      "userId": "u5",
+      "start": 1784315029336,
+      "end": 1784326609336
+    },
+    {
+      "userId": "u5",
+      "start": 1785611029336,
+      "end": 1785617389336
+    }
+  ],
+  "dossiers": {
+    "u1": {
+      "companions": {
+        "u2": {
+          "count": 14,
+          "ms": 23520000,
+          "last": 1785611029336
+        },
+        "u3": {
+          "count": 9,
+          "ms": 12960000,
+          "last": 1785783829336
+        },
+        "u5": {
+          "count": 6,
+          "ms": 5400000,
+          "last": 1785870229336
+        },
+        "u0": {
+          "count": 5,
+          "ms": 8400000,
+          "last": 1785351829336
+        },
+        "u6": {
+          "count": 3,
+          "ms": 1980000,
+          "last": 1785611029336
+        },
+        "u9": {
+          "count": 2,
+          "ms": 5040000,
+          "last": 1785611029336
+        },
+        "u7": {
+          "count": 1,
+          "ms": 1620000,
+          "last": 1785956629336
+        }
+      },
+      "guilds": {
+        "g1": 14,
+        "g2": 2
+      },
+      "firstSeen": 1782587029336,
+      "updated": 1786039429336
+    },
+    "u2": {
+      "companions": {
+        "u1": {
+          "count": 14,
+          "ms": 21000000,
+          "last": 1786043029336
+        },
+        "u4": {
+          "count": 8,
+          "ms": 19680000,
+          "last": 1786043029336
+        },
+        "u6": {
+          "count": 7,
+          "ms": 6720000,
+          "last": 1786043029336
+        },
+        "u3": {
+          "count": 4,
+          "ms": 9600000,
+          "last": 1786043029336
+        },
+        "u10": {
+          "count": 2,
+          "ms": 2040000,
+          "last": 1785524629336
+        },
+        "u11": {
+          "count": 1,
+          "ms": 420000,
+          "last": 1785611029336
+        }
+      },
+      "guilds": {
+        "g1": 12,
+        "g2": 2
+      },
+      "firstSeen": 1782587029336,
+      "updated": 1786039429336
+    }
+  },
+  "friendMap": {
+    "u4": {
+      "friends": [
+        "u1",
+        "u2",
+        "u3"
+      ],
+      "guilds": [
+        "g1",
+        "g2"
+      ],
+      "at": 1786039429336
+    },
+    "u5": {
+      "friends": [
+        "u1",
+        "u2"
+      ],
+      "guilds": [
+        "g1"
+      ],
+      "at": 1786035829336
+    },
+    "u6": {
+      "friends": [
+        "u2"
+      ],
+      "guilds": [
+        "g1",
+        "g2"
+      ],
+      "at": 1786032229336
+    },
+    "u7": {
+      "friends": [
+        "u1"
+      ],
+      "guilds": [
+        "g2"
+      ],
+      "at": 1786028629336
+    },
+    "u9": {
+      "friends": [
+        "u1",
+        "u3"
+      ],
+      "guilds": [
+        "g1"
+      ],
+      "at": 1786025029336
+    },
+    "u10": {
+      "friends": [
+        "u3"
+      ],
+      "guilds": [
+        "g2"
+      ],
+      "at": 1786021429336
+    },
+    "u11": {
+      "friends": [
+        "u1"
+      ],
+      "guilds": [
+        "g1",
+        "g2"
+      ],
+      "at": 1786017829336
+    }
+  }
+}

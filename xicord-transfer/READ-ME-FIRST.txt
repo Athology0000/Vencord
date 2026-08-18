@@ -1,0 +1,18 @@
+Xicord transfer bundle
+======================
+
+Copy the contents of this folder over a fresh Vencord checkout, keeping the paths:
+
+  src/userplugins/            -> <vencord>/src/userplugins/
+  xicord-*.js / .html / .bat  -> <vencord>/
+
+Then, in the Vencord folder:
+
+  pnpm install
+  pnpm build
+  pnpm inject
+
+Not included, on purpose:
+  xicord-key.bin    sealed to one Windows account; the new PC mints its own
+  xicord-cache.json that machine's own observations
+  settings.json     holds the sync token, which must be one per account

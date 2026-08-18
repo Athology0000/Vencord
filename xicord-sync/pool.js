@@ -33,6 +33,9 @@ function minStamp(a, b) {
     return out === Infinity ? 0 : out;
 }
 const isSnowflake = s => typeof s === "string" && /^\d{5,25}$/.test(s);
+// Minimum call duration POOLED (ms). Sub-threshold overlaps stay local only. Env-overridable
+// so storage/merge tests exercise the pool with tiny fixtures; production default is 1 minute.
+function poolMinMs() { return process.env.XICORD_POOL_MIN_MS != null ? Number(process.env.XICORD_POOL_MIN_MS) : 60000; }
 
 /** Sorted so a pair has exactly one key however the two ids arrive. */
 function pairKey(a, b) { return a < b ? `${a}|${b}` : `${b}|${a}`; }
@@ -89,9 +92,71 @@ function mergeUser(a, b) {
     return sat === (win.sat ?? 0) ? win : { ...win, sat };
 }
 
+// ---------------------------------------------------------------------------
+// The voice timeline
+// ---------------------------------------------------------------------------
+// `calls` is voice ARITHMETIC — how long two people have shared a room, in total. It
+// merges by maximum, because a running sum from a client that is behind is still not
+// wrong, just smaller. This is voice HISTORY, and a maximum cannot express it: two joins
+// an hour apart are two facts, not a bigger version of one. So it merges as a SET.
+//
+// Every contributor stamps a transition with its own clock as the dispatch arrives, so
+// the same join is recorded at slightly different instants by each machine watching it.
+// Identity is therefore the event floored into a fixed bucket — a pure function of the
+// record, so every contributor and this server derive it independently and agree. A
+// tolerance window would have been kinder to events near a boundary and is not available
+// here: it depends on which record arrives first, and this merge has to be commutative
+// and associative or mergePoolInto() is invalid. Must stay in step with voiceKey() in the
+// client's _sync.tsx — the two are one wire format described twice.
+const VOICE_BUCKET_MS = 5000;
+const MAX_VOICE_EVENTS = 100;
+const VOICE_ACTS = new Set(["joined", "left", "moved"]);
+
+function voiceKey(e) {
+    return `${e.act}|${e.ch || ""}|${e.old || ""}|${Math.floor((e.at || 0) / VOICE_BUCKET_MS)}`;
+}
+
+/** One wire event, or null. The shape has to describe something, or it is not storable. */
+function cleanVoiceEvent(e) {
+    if (!e || typeof e !== "object") return null;
+    const act = String(e.act);
+    if (!VOICE_ACTS.has(act)) return null;
+    const at = num(e.at);
+    if (!(at > 0)) return null;
+    const ch = isSnowflake(e.ch) ? e.ch : null;
+    const old = isSnowflake(e.old) ? e.old : null;
+    if (act === "joined" && !ch) return null;
+    if (act === "left" && !old) return null;
+    if (act === "moved" && (!ch || !old)) return null;
+    return { act, ch, old, at };
+}
+
+/**
+ * Union two people's timelines, newest first, capped.
+ *
+ * The EARLIER stamp wins a collision: `min` is commutative and associative, so which
+ * contributor's slice folded in first cannot change the stored record.
+ */
+function mergeVoicePerson(a = {}, b = {}) {
+    const byKey = new Map();
+    for (const raw of [...(a.events || []), ...(b.events || [])]) {
+        const e = cleanVoiceEvent(raw);
+        if (!e) continue;
+        const k = voiceKey(e);
+        const have = byKey.get(k);
+        if (!have || e.at < have.at) byKey.set(k, e);
+    }
+    const events = [...byKey.values()].sort((x, y) => y.at - x.at).slice(0, MAX_VOICE_EVENTS);
+    return {
+        events,
+        last: maxNum(a.last, b.last),
+        sat: maxNum(a.sat, b.sat)
+    };
+}
+
 /** Combine two pool slices. Commutative and idempotent. */
 function mergePool(a = {}, b = {}) {
-    const out = { people: {}, calls: {}, users: {} };
+    const out = { people: {}, calls: {}, users: {}, voice: {} };
     const pa = a.people || {}, pb = b.people || {};
     for (const id of new Set([...Object.keys(pa), ...Object.keys(pb)])) {
         out.people[id] = mergePerson(pa[id], pb[id]);
@@ -104,11 +169,21 @@ function mergePool(a = {}, b = {}) {
     for (const id of new Set([...Object.keys(ua), ...Object.keys(ub)])) {
         out.users[id] = mergeUser(ua[id], ub[id]);
     }
+    const va = a.voice || {}, vb = b.voice || {};
+    for (const id of new Set([...Object.keys(va), ...Object.keys(vb)])) {
+        out.voice[id] = mergeVoicePerson(va[id], vb[id]);
+    }
     return out;
 }
 
 function mergeAllPools(slices) {
-    const out = { people: {}, calls: {}, users: {} };
+    // A single slice IS already the merged pool — re-keying it into a fresh accumulator
+    // would hold a whole second copy for no change in the answer. On this deployment one
+    // contributor's slice is the bulk of the pool, so that copy was a big share of the
+    // per-request peak that OOM-killed a 1GB container. Use it directly. (sliceWithLog has
+    // already ensured the {people,calls,users,voice} shape, so nothing is missing.)
+    if (slices.length === 1) return slices[0];
+    const out = { people: {}, calls: {}, users: {}, voice: {} };
     // Folded IN PLACE. `mergePool` allocates a fresh result and re-keys the union of both
     // sides, so accumulating with it costs the size of the whole pool once per slice — on
     // the cold rebuild, which is the path that was exhausting the container. Merging into
@@ -139,12 +214,15 @@ function mergePoolInto(base, delta) {
     const ub = delta.users || {};
     if (!base.users) base.users = {};
     for (const id in ub) base.users[id] = mergeUser(base.users[id], ub[id]);
+    const vb = delta.voice || {};
+    if (!base.voice) base.voice = {};
+    for (const id in vb) base.voice[id] = mergeVoicePerson(base.voice[id], vb[id]);
     return base;
 }
 
 /** Reject anything that is not the shape we store. */
 function sanitizePool(payload) {
-    const out = { people: {}, calls: {}, users: {} };
+    const out = { people: {}, calls: {}, users: {}, voice: {} };
     if (!payload || typeof payload !== "object") return out;
 
     for (const [id, p] of Object.entries(payload.people || {})) {
@@ -161,6 +239,11 @@ function sanitizePool(payload) {
         // rebuild the key rather than trusting it: an unsorted or malformed one would
         // silently create a second record for a pair that already has one
         if (!isSnowflake(a) || !isSnowflake(b) || a === b) continue;
+        // Only relationships of at least a minute are POOLED. Enforced server-side, not
+        // just in the client, so an old or third-party client cannot refill the pool with
+        // the long tail of one-off sub-minute overlaps — which is what grew it past what a
+        // 1GB container can build and OOM-crash-looped it. Briefer calls stay purely local.
+        if (maxNum(c.ms, 0) < poolMinMs()) continue;
         const key = pairKey(a, b);
         const rec = {
             ms: maxNum(c.ms, 0),
@@ -176,6 +259,18 @@ function sanitizePool(payload) {
         if (!username) continue;
         const avatar = typeof u.avatar === "string" && /^https?:\/\//.test(u.avatar) ? u.avatar.slice(0, 512) : "";
         out.users[id] = { username, avatar, at: maxNum(u.at, 0) };
+    }
+    for (const [id, v] of Object.entries(payload.voice || {})) {
+        if (!isSnowflake(id) || !v || typeof v !== "object") continue;
+        // Through the merge rather than straight in, so one push carrying the same
+        // transition twice is already deduped and capped by the time it is stored.
+        const rec = mergeVoicePerson({ events: Array.isArray(v.events) ? v.events : [] }, {});
+        if (!rec.events.length) continue;
+        // `last` is recomputed rather than trusted: a client claiming a future one would
+        // otherwise sit permanently at the top of every timeline.
+        rec.last = rec.events[0].at;
+        delete rec.sat;
+        out.voice[id] = rec;
     }
     return out;
 }
@@ -319,5 +414,6 @@ function mergeFriendGraphs(blobs) {
 module.exports = {
     mergePool, mergeAllPools, mergePoolInto, mergeCall, mergePerson, mergeUser, sanitizePool,
     sanitizePrivate, mergePrivate, mergeFriendGraphs, stampRetractions,
+    mergeVoicePerson, cleanVoiceEvent, voiceKey, VOICE_BUCKET_MS, MAX_VOICE_EVENTS,
     pairKey, isSnowflake, maxNum, minStamp
 };
