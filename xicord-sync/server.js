@@ -201,16 +201,27 @@ function looksGzipped(buf) {
     return buf.length >= 2 && buf[0] === 0x1f && buf[1] === 0x8b;
 }
 /**
- * Read a JSON file, or `fallback` if it is missing or unreadable.
+ * Read a file that may be gzipped at rest, as text.
  *
- * Reads the raw bytes so a gzipped-at-rest slice (see writeJsonGz) and a legacy plain-JSON
- * one both decode through the same path -- the gzip magic is what distinguishes them.
+ * Peek the 2 magic bytes FIRST, then take the cheap path -- rather than reading the whole
+ * file into a Buffer and then .toString()-ing it, which holds BOTH the buffer and its
+ * string copy live at once. On the 100MB main slice that doubling is a ~200MB spike, and on
+ * a 1GB container it is the difference between serving and an OOM-restart loop (it was).
+ * A gzipped slice is small on disk (10MB), so reading it whole to inflate is cheap; a plain
+ * slice reads straight to a single string, exactly as the pre-gzip code did.
  */
+async function readMaybeGzipText(file) {
+    let gz = false;
+    const fh = await fsp.open(file, "r");
+    try { const head = Buffer.alloc(2); await fh.read(head, 0, 2, 0); gz = looksGzipped(head); }
+    finally { await fh.close().catch(() => { }); }
+    if (gz) return (await gunzipAsync(await fsp.readFile(file))).toString("utf8");
+    return fsp.readFile(file, "utf8");
+}
+/** Read a JSON file, or `fallback` if it is missing or unreadable. Gzip-aware (see above). */
 async function readJson(file, fallback) {
     try {
-        const buf = await fsp.readFile(file);
-        const text = looksGzipped(buf) ? (await gunzipAsync(buf)).toString("utf8") : buf.toString("utf8");
-        const data = JSON.parse(text);
+        const data = JSON.parse(await readMaybeGzipText(file));
         return data && typeof data === "object" ? data : fallback;
     } catch { return fallback; }
 }
@@ -314,9 +325,7 @@ async function readAllPools() {
 
 async function readSlice(deviceId) {
     try {
-        const buf = await fsp.readFile(path.join(DEVICES_DIR, `${deviceId}.json`));
-        const txt = looksGzipped(buf) ? (await gunzipAsync(buf)).toString("utf8") : buf.toString("utf8");
-        const data = JSON.parse(txt);
+        const data = JSON.parse(await readMaybeGzipText(path.join(DEVICES_DIR, `${deviceId}.json`)));
         return data && typeof data === "object" ? data : { dossiers: {}, users: {} };
     } catch { return { dossiers: {}, users: {} }; }
 }
