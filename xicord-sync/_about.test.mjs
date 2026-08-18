@@ -4,7 +4,7 @@
 process.env.XICORD_POOL_MIN_MS = "0";
 import { createRequire } from "module";
 const require = createRequire(import.meta.url);
-const { sanitizeAbout, pickAbout, mergeUser, sanitizePool } = require("./pool.js");
+const { sanitizeAbout, pickAbout, mergeUser, mergeGuild, sanitizePool, mergePoolInto } = require("./pool.js");
 
 let pass = 0, fail = 0;
 const ok = (c, m) => { if (c) pass++; else { fail++; console.error("FAIL:", m); } };
@@ -77,6 +77,22 @@ const eq = (a, b, m) => ok(JSON.stringify(a) === JSON.stringify(b), `${m}\n   go
     eq(clean.users["123456789012345678"].about, { bio: "hello", flags: 64, at: 7 }, "about survives sanitize on the user record");
     ok(clean.users["223456789012345678"].about === undefined, "a user with no about has none");
     ok(clean.users["323456789012345678"].about === undefined, "a junk-only about is dropped");
+}
+
+/* ---- server names pool like user names ---- */
+{
+    const older = { name: "Old Name", at: 100 }, newer = { name: "New Name", at: 200 };
+    eq(mergeGuild(older, newer).name, "New Name", "guild: fresher name wins");
+    eq(mergeGuild(newer, older).name, "New Name", "guild: order-independent");
+    eq(mergeGuild(null, newer), newer, "guild: one-sided");
+    const clean = sanitizePool({ guilds: { "753384735236948018": { name: "  My Server  ", at: 5 }, "999": { name: "bad id" }, "823384735236948018": { name: "" } } });
+    eq(clean.guilds["753384735236948018"], { name: "My Server", at: 5 }, "guild sanitize: trims, keeps valid");
+    ok(!clean.guilds["999"], "guild sanitize: rejects a non-snowflake id");
+    ok(!clean.guilds["823384735236948018"], "guild sanitize: drops an empty name");
+    // merges into a base pool
+    const base = { people: {}, calls: {}, users: {}, voice: {}, guilds: { "753384735236948018": { name: "My Server", at: 5 } } };
+    mergePoolInto(base, { guilds: { "753384735236948018": { name: "Renamed", at: 9 } } });
+    eq(base.guilds["753384735236948018"].name, "Renamed", "guild: mergePoolInto takes the rename");
 }
 
 console.log(`\n${fail ? "" : "OK - "}${pass} passed, ${fail} failed`);

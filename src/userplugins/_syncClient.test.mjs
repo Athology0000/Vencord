@@ -72,6 +72,16 @@ console.log("\n-- opened-profile About rides on the user record --");
     ok("a user with no About has none", !!pn.users[A] && pn.users[A].about === undefined);
 }
 
+console.log("\n-- server names ride along, resolved live from the client's guild list --");
+{
+    const c = comp(1, 65000, 90); c.guilds = [G];   // the call happened in server G
+    const p = toPool({ [A]: prof({ [B]: c }) }, [ME], 0, {}, id => id === G ? "My Cool Server" : "");
+    ok("the call's server is in the guilds map", !!(p.guilds && p.guilds[G]), JSON.stringify(p.guilds));
+    ok("with its resolved name", !!p.guilds && p.guilds[G].name === "My Cool Server");
+    const p2 = toPool({ [A]: prof({ [B]: comp(1, 65000, 90) }) }, [ME], 0, {});
+    ok("without a resolver, no guilds map is sent", !p2.guilds);
+}
+
 console.log("\n-- the wire back into local profiles --");
 let local = {};
 const pool = {

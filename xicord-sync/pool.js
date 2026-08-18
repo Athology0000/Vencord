@@ -82,6 +82,16 @@ function mergeCall(a = {}, b = {}) {
  * here. The fresher resolution wins, which is how a rename eventually reaches everyone.
  * Without this the shared view is nothing but snowflakes.
  */
+// A server's name pools like a user's: objective, and the freshest resolution wins so a
+// rename eventually reaches everyone. The arrival stamp is the later of the two regardless.
+function mergeGuild(a, b) {
+    if (!a) return b;
+    if (!b) return a;
+    const win = (b.at ?? 0) > (a.at ?? 0) ? b : a;
+    const sat = maxNum(a.sat, b.sat);
+    return sat === (win.sat ?? 0) ? win : { ...win, sat };
+}
+
 /** The fresher About by its OWN clock, or whichever side has one. See mergeUser. */
 function pickAbout(x, y) {
     if (!x) return y || null;
@@ -169,7 +179,9 @@ function mergeVoicePerson(a = {}, b = {}) {
 
 /** Combine two pool slices. Commutative and idempotent. */
 function mergePool(a = {}, b = {}) {
-    const out = { people: {}, calls: {}, users: {}, voice: {} };
+    const out = { people: {}, calls: {}, users: {}, voice: {}, guilds: {} };
+    const ga = a.guilds || {}, gb = b.guilds || {};
+    for (const id of new Set([...Object.keys(ga), ...Object.keys(gb)])) out.guilds[id] = mergeGuild(ga[id], gb[id]);
     const pa = a.people || {}, pb = b.people || {};
     for (const id of new Set([...Object.keys(pa), ...Object.keys(pb)])) {
         out.people[id] = mergePerson(pa[id], pb[id]);
@@ -230,6 +242,9 @@ function mergePoolInto(base, delta) {
     const vb = delta.voice || {};
     if (!base.voice) base.voice = {};
     for (const id in vb) base.voice[id] = mergeVoicePerson(base.voice[id], vb[id]);
+    const gb = delta.guilds || {};
+    if (!base.guilds) base.guilds = {};
+    for (const id in gb) base.guilds[id] = mergeGuild(base.guilds[id], gb[id]);
     return base;
 }
 
@@ -273,7 +288,7 @@ function sanitizeAbout(a) {
 
 /** Reject anything that is not the shape we store. */
 function sanitizePool(payload) {
-    const out = { people: {}, calls: {}, users: {}, voice: {} };
+    const out = { people: {}, calls: {}, users: {}, voice: {}, guilds: {} };
     if (!payload || typeof payload !== "object") return out;
 
     for (const [id, p] of Object.entries(payload.people || {})) {
@@ -325,6 +340,12 @@ function sanitizePool(payload) {
         rec.last = rec.events[0].at;
         delete rec.sat;
         out.voice[id] = rec;
+    }
+    for (const [id, g] of Object.entries(payload.guilds || {})) {
+        if (!isSnowflake(id) || !g || typeof g !== "object") continue;
+        const name = (typeof g.name === "string" ? g.name : "").slice(0, 100).trim();
+        if (!name) continue;
+        out.guilds[id] = { name, at: maxNum(g.at, 0) };
     }
     return out;
 }
@@ -466,7 +487,7 @@ function mergeFriendGraphs(blobs) {
 }
 
 module.exports = {
-    mergePool, mergeAllPools, mergePoolInto, mergeCall, mergePerson, mergeUser, sanitizePool, sanitizeAbout, pickAbout,
+    mergePool, mergeAllPools, mergePoolInto, mergeCall, mergePerson, mergeUser, mergeGuild, sanitizePool, sanitizeAbout, pickAbout,
     sanitizePrivate, mergePrivate, mergeFriendGraphs, stampRetractions,
     mergeVoicePerson, cleanVoiceEvent, voiceKey, VOICE_BUCKET_MS, MAX_VOICE_EVENTS,
     pairKey, isSnowflake, maxNum, minStamp

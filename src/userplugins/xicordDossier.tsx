@@ -1321,8 +1321,12 @@ async function syncOnce(full = false) {
 
         // ---- then push ----
         const since = full ? 0 : syncWatermark;
+        // Resolve a server's name live from the client's own guild list, so the pooled
+        // server view reads as names, not raw ids. Only the guilds a push references are
+        // looked up (inside toPool), and an unknown one just stays an id server-side.
+        const guildName = (gid: string) => { try { return (GuildStore as any).getGuild?.(gid)?.name || ""; } catch { return ""; } };
         // hand over the names we have resolved, so the shared view is readable
-        const out = toPool(profiles, mine, since, knownUsers as any);
+        const out = toPool(profiles, mine, since, knownUsers as any, guildName);
         // The Voice Log keeps its own watermark: its events are stamped when they were
         // OBSERVED, which is a different clock from the profile store's `updated`, and
         // sharing one would silently skip whichever of the two moved less.

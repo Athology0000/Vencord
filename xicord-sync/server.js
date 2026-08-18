@@ -489,7 +489,8 @@ const counts = p => ({
     people: Object.keys(p.people || {}).length,
     calls: Object.keys(p.calls || {}).length,
     users: Object.keys(p.users || {}).length,
-    voice: Object.keys(p.voice || {}).length
+    voice: Object.keys(p.voice || {}).length,
+    guilds: Object.keys(p.guilds || {}).length
 });
 
 /**
@@ -503,6 +504,7 @@ function stampArrival(clean, now) {
     for (const k in clean.calls) clean.calls[k].sat = now;
     for (const id in clean.users || {}) clean.users[id].sat = now;
     for (const id in clean.voice || {}) clean.voice[id].sat = now;
+    for (const id in clean.guilds || {}) clean.guilds[id].sat = now;
     return clean;
 }
 // Compacted when the log passes this, so replay stays bounded. Only ever done on a cold
@@ -547,6 +549,7 @@ async function sliceWithLog(file, logFile) {
     // Absent from every slice written before the timeline existed, so it is defaulted
     // rather than assumed — mergePoolInto writes into it directly.
     if (!pool.voice) pool.voice = {};
+    if (!pool.guilds) pool.guilds = {};
     let logBytes = 0;
     try { logBytes = (await fsp.stat(logFile)).size; } catch { return { pool, logBytes: 0 }; }
     if (!logBytes) return { pool, logBytes: 0 };
@@ -895,6 +898,9 @@ const server = http.createServer(async (req, res) => {
         // Discord epoch), so it is DERIVED here rather than stored -- zero bytes in the pool,
         // and it doubles as alt-detection: a brand-new account in someone's orbit stands out.
         const createdAt = sid => { try { return Number((BigInt(sid) >> 22n) + 1420070400000n); } catch { return 0; } };
+        // A pooled server's name, if any contributor has resolved it; else null (the UI
+        // falls back to the id).
+        const gname = gid => { const g = (P.guilds || {})[gid]; return (g && g.name) || null; };
 
         if (url === "/v1/summary") {
             const people = Object.keys(P.people).length || Object.keys(P.users).length;
@@ -928,7 +934,7 @@ const server = http.createServer(async (req, res) => {
                 .map(cl => ({ size: byCluster[cl].length, members: byCluster[cl].sort((a, b) => (cen[b] || 0) - (cen[a] || 0)).slice(0, 8).map(uinfo) }));
             // the rooms that link the most pooled people
             const servers = intel.topServers(IN.guildMembers, 24)
-                .map(s => ({ ...s, sample: (IN.guildMembers[s.guild] || []).sort((a, b) => (cen[b] || 0) - (cen[a] || 0)).slice(0, 6).map(uinfo) }));
+                .map(s => ({ ...s, name: gname(s.guild), sample: (IN.guildMembers[s.guild] || []).sort((a, b) => (cen[b] || 0) - (cen[a] || 0)).slice(0, 6).map(uinfo) }));
             return send(res, 200, {
                 hubs, clusters: clusterList, servers,
                 counts: {
@@ -945,7 +951,7 @@ const server = http.createServer(async (req, res) => {
             const cs = IN.callServers;
             const list = Object.keys(cs).map(g => ({ guild: g, pairs: cs[g].pairs, ms: cs[g].ms, count: cs[g].count, people: cs[g].people.size }))
                 .filter(s => s.pairs >= 1).sort((a, b) => b.ms - a.ms).slice(0, 60)
-                .map(s => { const top = [...IN.callServers[s.guild].people].sort((a, b) => (IN.centrality[b] || 0) - (IN.centrality[a] || 0)).slice(0, 4).map(uinfo); return { ...s, sample: top }; });
+                .map(s => { const top = [...IN.callServers[s.guild].people].sort((a, b) => (IN.centrality[b] || 0) - (IN.centrality[a] || 0)).slice(0, 4).map(uinfo); return { ...s, name: gname(s.guild), sample: top }; });
             return send(res, 200, { servers: list, total: Object.keys(cs).length });
         }
 
@@ -960,7 +966,7 @@ const server = http.createServer(async (req, res) => {
             const relationships = pairs.slice(0, 100).map(function (t) { return { a: uinfo(t[0]), b: uinfo(t[1]), ms: t[2].ms || 0, count: t[2].count || 0, last: t[2].last || 0, score: intel.closeness(t[2], now, IN.maxMs) }; });
             const cs = IN.callServers[g];
             const members = (cs ? [...cs.people] : []).sort((a, b) => (IN.centrality[b] || 0) - (IN.centrality[a] || 0)).slice(0, 30).map(uinfo);
-            return send(res, 200, { guild: g, pairs: cs ? cs.pairs : relationships.length, ms: cs ? cs.ms : 0, count: cs ? cs.count : 0, people: cs ? cs.people.size : 0, relationships, members });
+            return send(res, 200, { guild: g, name: gname(g), pairs: cs ? cs.pairs : relationships.length, ms: cs ? cs.ms : 0, count: cs ? cs.count : 0, people: cs ? cs.people.size : 0, relationships, members });
         }
 
         // /v1/profile — resolve q (id: / dn: / name: / @ / tag: / auto), then assemble
@@ -1016,7 +1022,7 @@ const server = http.createServer(async (req, res) => {
         let hubRank = 1; for (const o in IN.centrality) if ((IN.centrality[o] || 0) > cenScore) hubRank++;
 
         // servers that link this person to other pooled people, biggest first
-        const servers = myGuilds.map(g => ({ guild: g, count: (IN.guildMembers[g] || []).length }))
+        const servers = myGuilds.map(g => ({ guild: g, name: gname(g), count: (IN.guildMembers[g] || []).length }))
             .filter(s => s.count >= 2).sort((a, b) => b.count - a.count).slice(0, 20);
 
         // alt candidates: shared contacts never in a call with, scored with the richer signals
@@ -1048,7 +1054,8 @@ const server = http.createServer(async (req, res) => {
         }
         const clean = stampArrival(sanitizePool(parsed), Date.now());
         const empty = !Object.keys(clean.people).length && !Object.keys(clean.calls).length
-            && !Object.keys(clean.users || {}).length && !Object.keys(clean.voice || {}).length;
+            && !Object.keys(clean.users || {}).length && !Object.keys(clean.voice || {}).length
+            && !Object.keys(clean.guilds || {}).length;
         let slice = null;
         await withLock(`pool:${owner}`, async () => {
             // A push with nothing in it used to cost the same full read-merge-write as a

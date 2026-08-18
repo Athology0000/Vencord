@@ -52,6 +52,9 @@ export interface PoolPayload {
      * watching, and only one contributor has to have been online to see it.
      */
     voice?: Record<string, PoolVoicePerson>;
+    // Server id -> name, so the pooled server view reads as names not snowflakes. Objective,
+    // so it pools like everything else; the freshest resolution wins.
+    guilds?: Record<string, { name: string; at: number; }>;
 }
 export interface PrivatePayload {
     friends: Record<string, { friends: string[]; guilds: string[]; at: number; }>;
@@ -77,7 +80,8 @@ export function toPool(
     profiles: Record<string, any>,
     mine: string[],
     since = 0,
-    names: Record<string, { username: string; avatar: string; at?: number; }> = {}
+    names: Record<string, { username: string; avatar: string; at?: number; }> = {},
+    guildName?: (id: string) => string
 ): PoolPayload {
     const people: Record<string, PoolPerson> = {};
     const calls: Record<string, PoolCall> = {};
@@ -128,7 +132,20 @@ export function toPool(
         if (about && typeof about === "object") rec.about = about;
         users[id] = rec;
     }
-    return { people, calls, users };
+    // Resolve names for the servers this payload's calls actually reference, so the pool can
+    // show a server by name. Only these guilds are looked up, keeping a delta small.
+    let guilds: Record<string, { name: string; at: number; }> | undefined;
+    if (guildName) {
+        const seen = new Set<string>();
+        for (const k in calls) { const i = k.indexOf("|"); for (const g of calls[k].guilds || []) seen.add(g); void i; }
+        const now = Date.now();
+        for (const g of seen) {
+            if (!isId(g)) continue;
+            const nm = (guildName(g) || "").slice(0, 100);
+            if (nm) (guilds || (guilds = {}))[g] = { name: nm, at: now };
+        }
+    }
+    return guilds ? { people, calls, users, guilds } : { people, calls, users };
 }
 
 /**
@@ -501,5 +518,8 @@ export function chunkPool(pool: PoolPayload, perChunk = 4000): PoolPayload[] {
         }
         out.push({ people, calls: {}, users, voice });
     }
+    // The server-name map is small and merges idempotently, so it rides on the first batch;
+    // if a batch fails the next full push re-sends it.
+    if (pool.guilds && out.length) out[0].guilds = pool.guilds;
     return out.length ? out : [pool];
 }

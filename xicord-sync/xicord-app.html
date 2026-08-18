@@ -418,14 +418,14 @@ function renderDashboard(){
   }).catch(function(){});
   // servers ranked by the calls that happened in them (click to open the server dossier)
   api("/v1/servers").then(function(sv){
-    document.getElementById("p-servers").innerHTML= sv.servers.length? '<table><tbody>'+sv.servers.slice(0,12).map(function(s){var who=s.sample&&s.sample.length?s.sample.slice(0,2).map(function(u){return esc(nameOf(u));}).join(', '):esc(s.guild);return '<tr><td><a data-server="'+esc(s.guild)+'" class="clip" style="cursor:pointer">'+who+' <span class="faint">'+fmtN(s.people)+'p / '+fmtN(s.pairs)+'rel</span></a></td><td class="num">'+fmtDur(s.ms)+'</td></tr>';}).join("")+'</tbody></table>' : '<div class="empty">No calls categorised to a server yet.</div>';
+    document.getElementById("p-servers").innerHTML= sv.servers.length? '<table><tbody>'+sv.servers.slice(0,12).map(function(s){var who=s.name?esc(s.name):(s.sample&&s.sample.length?s.sample.slice(0,2).map(function(u){return esc(nameOf(u));}).join(', '):esc(s.guild));return '<tr><td><a data-server="'+esc(s.guild)+'" class="clip" style="cursor:pointer">'+who+' <span class="faint">'+fmtN(s.people)+'p / '+fmtN(s.pairs)+'rel</span></a></td><td class="num">'+fmtDur(s.ms)+'</td></tr>';}).join("")+'</tbody></table>' : '<div class="empty">No calls categorised to a server yet.</div>';
   }).catch(function(){});
 }
 
 // A server dossier: the relationships whose calls happened here, plus who is central to it.
 function renderServer(guild, d){
   var out=[];
-  out.push('<div class="card prof-hero"><i class="corner tl"></i><i class="corner br"></i><span class="av"></span><div><div class="nm">Server dossier</div><div class="id">'+esc(guild)+'</div><div class="meta"><span>'+fmtN(d.people)+' people</span><span>'+fmtN(d.pairs)+' relationships</span><span>'+fmtDur(d.ms)+' in voice</span></div></div></div>');
+  out.push('<div class="card prof-hero"><i class="corner tl"></i><i class="corner br"></i><span class="av"></span><div><div class="nm">'+esc(d.name||'Server dossier')+'</div><div class="id">'+esc(guild)+'</div><div class="meta"><span>'+fmtN(d.people)+' people</span><span>'+fmtN(d.pairs)+' relationships</span><span>'+fmtDur(d.ms)+' in voice</span></div></div></div>');
   out.push('<div class="grid2" style="margin-top:16px">');
   out.push('<div class="card panel"><i class="corner tl"></i><i class="corner br"></i><h3>Relationships here <span class="tag">'+fmtN(d.pairs)+'</span></h3>');
   var rels=d.relationships||[];
