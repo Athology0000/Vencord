@@ -19,6 +19,12 @@ import { mkdtempSync, rmSync, mkdirSync, writeFileSync, readFileSync, existsSync
 import { tmpdir } from "os";
 import { join } from "path";
 import { spawn } from "child_process";
+import { gunzipSync } from "zlib";
+
+// The big pool slices are gzipped on disk after compaction (see writeJsonGz in server.js);
+// a small in-place slice stays plain. Read either, told apart by the gzip magic, exactly as
+// the server's readJson does -- so a content check does not depend on which path wrote it.
+const sliceText = f => { const b = readFileSync(f); return (b.length >= 2 && b[0] === 0x1f && b[1] === 0x8b) ? gunzipSync(b).toString("utf8") : b.toString("utf8"); };
 
 const OWNER = "1400000000000000009";
 const dir = mkdtempSync(join(tmpdir(), "xicord-pushlog-"));
@@ -92,7 +98,7 @@ try {
     // the slice is now past XICORD_SMALL_SLICE_BYTES, so this one takes the log path
     await call("/v1/pool", pushOf(100, 106));
     ok("a log appears", existsSync(logFile), poolDir().join(","));
-    const sliceBefore = readFileSync(sliceFile, "utf8");
+    const sliceBefore = sliceText(sliceFile);
     ok("and the slice itself was NOT rewritten", !sliceBefore.includes(P(100)), sliceBefore.slice(0, 80));
 
     console.log("\n-- but the pull cannot tell the difference --");
@@ -131,7 +137,7 @@ try {
         Object.keys(got.people).length >= before + 30 && !!got.people[P(0)] && !!got.people[P(200)],
         `${Object.keys(got.people).length} people, was ${before}`);
     ok("and no call pair was lost", Object.keys(got.calls).length >= beforeCalls, String(Object.keys(got.calls).length));
-    ok("the slice now carries what the log held", readFileSync(sliceFile, "utf8").includes(P(100)));
+    ok("the slice now carries what the log held", sliceText(sliceFile).includes(P(100)));
     ok("and the log was cleared", !existsSync(logFile) || readFileSync(logFile, "utf8").length < 800,
         existsSync(logFile) ? String(readFileSync(logFile, "utf8").length) : "gone");
 

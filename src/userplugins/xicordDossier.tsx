@@ -33,6 +33,8 @@ const ModalRoot = ModalRootRaw as ComponentType<any>;
 const ModalHeader = ModalHeaderRaw as ComponentType<any>;
 const ModalContent = ModalContentRaw as ComponentType<any>;
 const VoiceStateStore = findStoreLazy("VoiceStateStore");
+// Holds bio / pronouns / connected accounts / badges once Discord fetches a profile.
+const UserProfileStore = findStoreLazy("UserProfileStore");
 
 // Every flush re-serialises the whole profile store into settings.json, and that file
 // runs well past a megabyte once a few hundred people are tracked. At 5s that write was
@@ -146,11 +148,36 @@ const settings = definePluginSettings({
 
 interface Companion { count: number; ms: number; last: number; }
 interface GameStat { ms: number; last: number; sessions: number; }
+// A point-in-time capture of the richer profile fields Discord returns only when you
+// open someone: their About Me, pronouns, linked accounts, badge flags and Nitro/boost
+// state. Taken on USER_PROFILE_FETCH_SUCCESS, when the profile store is populated.
+// Bounded hard on every field because a bio is user-controlled free text and this rides
+// into the synced dossier. Account CREATION date is deliberately NOT stored: it is a pure
+// function of the snowflake id, so the dashboard derives it and the pool carries no bytes.
+interface AboutConn { t: string; n: string; id?: string; v?: 1; }
+interface About {
+    bio?: string;
+    pronouns?: string;
+    conns?: AboutConn[];   // connected accounts: type, name, id, verified
+    flags?: number;        // public_flags bitfield -> badges
+    premium?: number;      // premium_type (0..3): Nitro tier
+    since?: number;        // premium_since, ms: Nitro since
+    boost?: number;        // premium_guild_since, ms: server-boosting since
+    banner?: string;       // banner hash (URL rebuilt on the dashboard, like avatars)
+    deco?: string;         // avatar_decoration asset
+    at: number;            // when this capture was taken
+}
+const MAX_BIO = 600;
+const MAX_PRONOUNS = 40;
+const MAX_CONNS = 12;
+
 interface Profile {
     companions: Record<string, Companion>;
     guilds: Record<string, number>;
     // per-game accumulated play time observed via presence (games this person ran)
     games?: Record<string, GameStat>;
+    // the richer, opened-profile capture (bio, pronouns, connections, badges)
+    about?: About;
     updated: number;
     firstSeen: number;
 }
@@ -1114,6 +1141,9 @@ const onProfileOpened = (e: any) => {
     if (addToRoster(roster, new Map([[id, Array.isArray(guilds) ? guilds : []]]), Date.now())) {
         scheduleRosterFlush();
     }
+    // On USER_PROFILE_FETCH_SUCCESS the profile store is populated, so grab the richer
+    // fields (bio, pronouns, connected accounts, badges) while they are in hand.
+    try { captureAbout(id); } catch { }
     // Mutuals may already hold the free answer from the same event; fold it in now
     // rather than waiting up to 20s for the next silent tick.
     setTimeout(() => { try { harvestRosterAnswers(); } catch { } }, 0);
@@ -1720,6 +1750,113 @@ function profileFor(id: string): Profile {
     let p = profiles[id];
     if (!p) { p = profiles[id] = { companions: {}, guilds: {}, updated: 0, firstSeen: Date.now() }; }
     return p;
+}
+
+// A timestamp Discord may hand back as ms, a number, or an ISO string. 0 means "unknown".
+function toMs(v: any): number {
+    if (typeof v === "number") return v > 0 ? v : 0;
+    if (typeof v === "string") { const t = Date.parse(v); return Number.isFinite(t) ? t : 0; }
+    return 0;
+}
+// Keep only a bare banner hash; the dashboard rebuilds the URL, exactly as it does for
+// avatars, so the pool never carries a full CDN link that would go stale on a size change.
+function bannerHashOf(v: any): string {
+    if (typeof v !== "string" || !v) return "";
+    const m = v.match(/\/banners\/\d+\/([a-z0-9_]+)/i);
+    return (m ? m[1] : v).slice(0, 64);
+}
+
+/**
+ * Normalise Discord's raw stores into the compact, capped About we keep.
+ *
+ * Discord hands profile data back in two shapes: the normalised store object
+ * (getUserProfile -> connectedAccounts, premiumType) and the raw dispatch
+ * (connected_accounts, premium_type, nested user_profile). This reads BOTH so a capture
+ * works whichever arrives. Pure, so the test suite drives it with fixtures. Returns null
+ * when there is nothing worth storing beyond the timestamp.
+ */
+function buildAbout(user: any, profile: any, now: number): About | null {
+    const p = profile || {};
+    const u = user || {};
+    const up = p.user_profile || p.userProfile || {};   // the raw dispatch nests it
+    const out: About = { at: now };
+
+    const bio = (typeof p.bio === "string" ? p.bio : (typeof up.bio === "string" ? up.bio : "")).trim();
+    if (bio) out.bio = bio.slice(0, MAX_BIO);
+    const pron = (typeof p.pronouns === "string" ? p.pronouns : (typeof up.pronouns === "string" ? up.pronouns : "")).trim();
+    if (pron) out.pronouns = pron.slice(0, MAX_PRONOUNS);
+
+    const rawConns = p.connectedAccounts || p.connected_accounts || u.connectedAccounts || [];
+    if (Array.isArray(rawConns) && rawConns.length) {
+        const conns: AboutConn[] = [];
+        for (const c of rawConns) {
+            if (!c || typeof c !== "object") continue;
+            const t = typeof c.type === "string" ? c.type.slice(0, 32) : "";
+            const n = typeof c.name === "string" ? c.name.slice(0, 100) : "";
+            if (!t || !n) continue;
+            const rec: AboutConn = { t, n };
+            if (typeof c.id === "string" && c.id) rec.id = c.id.slice(0, 100);
+            if (c.verified) rec.v = 1;
+            conns.push(rec);
+            if (conns.length >= MAX_CONNS) break;
+        }
+        if (conns.length) out.conns = conns;
+    }
+
+    const flags = typeof u.publicFlags === "number" ? u.publicFlags
+        : typeof p.flags === "number" ? p.flags
+            : typeof up.flags === "number" ? up.flags : 0;
+    if (flags) out.flags = flags;
+    const premium = typeof p.premiumType === "number" ? p.premiumType
+        : typeof p.premium_type === "number" ? p.premium_type
+            : typeof u.premiumType === "number" ? u.premiumType : 0;
+    if (premium) out.premium = premium;
+    const since = toMs(p.premiumSince ?? p.premium_since);
+    if (since) out.since = since;
+    const boost = toMs(p.premiumGuildSince ?? p.premium_guild_since);
+    if (boost) out.boost = boost;
+    const banner = bannerHashOf(u.banner || p.banner || up.banner);
+    if (banner) out.banner = banner;
+    const deco = String((u.avatarDecorationData && u.avatarDecorationData.asset) || u.avatarDecoration || "").slice(0, 64);
+    if (deco) out.deco = deco;
+
+    const has = out.bio || out.pronouns || out.conns || out.flags || out.premium
+        || out.banner || out.deco || out.since || out.boost;
+    return has ? out : null;
+}
+
+/**
+ * Fold a fresh capture over the stored one. The new snapshot wins wholesale, but any field
+ * it lacks is backfilled from the previous capture: a partial capture (the user object was
+ * present but the profile fetch had not landed yet) must never ERASE a bio we already had.
+ */
+function mergeAbout(prev: About | undefined, next: About): About {
+    if (!prev) return next;
+    const out: About = { ...next };
+    const fields: Array<keyof About> = ["bio", "pronouns", "conns", "flags", "premium", "since", "boost", "banner", "deco"];
+    for (const k of fields) if (out[k] === undefined && prev[k] !== undefined) (out as any)[k] = prev[k];
+    return out;
+}
+
+// Everything about a capture EXCEPT when it was taken — so re-opening a profile that has
+// not changed is a no-op instead of a needless flush.
+function aboutSig(a: About): string {
+    return JSON.stringify([a.bio, a.pronouns, a.conns, a.flags, a.premium, a.since, a.boost, a.banner, a.deco]);
+}
+
+/** Read the live stores for one id, capture their About, and store it if it changed. */
+function captureAbout(id: string) {
+    let user: any = null, profile: any = null;
+    try { user = UserStore.getUser(id); } catch { }
+    try { profile = (UserProfileStore as any)?.getUserProfile?.(id); } catch { }
+    const next = buildAbout(user, profile, Date.now());
+    if (!next) return;
+    const p = profileFor(id);
+    const merged = mergeAbout(p.about, next);
+    if (p.about && aboutSig(p.about) === aboutSig(merged)) return;   // nothing of substance changed
+    p.about = merged;
+    p.updated = merged.at;
+    scheduleFlush();
 }
 
 // Reconcile a target's open overlap against who is actually in their public VC now.

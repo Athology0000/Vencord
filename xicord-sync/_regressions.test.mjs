@@ -12,6 +12,12 @@ import { mkdtempSync, rmSync, mkdirSync, writeFileSync, readFileSync, existsSync
 import { tmpdir } from "os";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
+import { gunzipSync } from "zlib";
+
+// After compaction a pool slice is gzipped on disk (writeJsonGz in server.js); a small
+// in-place one stays plain. Decode either, told apart by the gzip magic, as the server's
+// readJson does. Writing plain JSON back is still fine -- readJson reads both.
+const sliceJson = f => { const b = readFileSync(f); return JSON.parse((b.length >= 2 && b[0] === 0x1f && b[1] === 0x8b) ? gunzipSync(b).toString("utf8") : b.toString("utf8")); };
 import { spawn } from "child_process";
 import { createRequire } from "module";
 
@@ -242,7 +248,7 @@ try {
     // Write straight to the slice, behind the server's back — this is precisely a "missed
     // invalidation": nothing tells the cache it is stale. Only the TTL can catch it.
     const sliceFile = join(dir, "pool", `${OWNER}.json`);
-    const onDisk = JSON.parse(readFileSync(sliceFile, "utf8"));
+    const onDisk = sliceJson(sliceFile);
     onDisk.people[P(600)] = { guilds: [], first: 1, last: 1000, sat: Date.now() };
     writeFileSync(sliceFile, JSON.stringify(onDisk));
     ok("the cached full pull does not see it yet",

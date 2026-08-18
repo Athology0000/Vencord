@@ -17,6 +17,10 @@ const fsp = require("fs/promises");
 const path = require("path");
 const crypto = require("crypto");
 const readline = require("readline");
+const zlib = require("zlib");
+const { promisify } = require("util");
+const gzipAsync = promisify(zlib.gzip);
+const gunzipAsync = promisify(zlib.gunzip);
 const { mergeAll, mergeSnapshot, sanitize } = require("./merge");
 const { mergeAllPools, mergePool, mergePoolInto, sanitizePool, sanitizePrivate, mergePrivate, mergeFriendGraphs } = require("./pool");
 const auth = require("./auth");
@@ -190,10 +194,23 @@ async function ensureDirs() {
     issued = await readJson(AUTH_FILE, {});
 }
 
-/** Read a JSON file, or `fallback` if it is missing or unreadable. */
+// A gzip member always starts 0x1f 0x8b, which no JSON text ever does (JSON begins with
+// whitespace, `{`, `[`, `"`, a digit, `-`, or a keyword letter). So the magic bytes tell a
+// gzipped slice from a legacy plain-JSON one with no side channel: old files still read.
+function looksGzipped(buf) {
+    return buf.length >= 2 && buf[0] === 0x1f && buf[1] === 0x8b;
+}
+/**
+ * Read a JSON file, or `fallback` if it is missing or unreadable.
+ *
+ * Reads the raw bytes so a gzipped-at-rest slice (see writeJsonGz) and a legacy plain-JSON
+ * one both decode through the same path -- the gzip magic is what distinguishes them.
+ */
 async function readJson(file, fallback) {
     try {
-        const data = JSON.parse(await fsp.readFile(file, "utf8"));
+        const buf = await fsp.readFile(file);
+        const text = looksGzipped(buf) ? (await gunzipAsync(buf)).toString("utf8") : buf.toString("utf8");
+        const data = JSON.parse(text);
         return data && typeof data === "object" ? data : fallback;
     } catch { return fallback; }
 }
@@ -201,6 +218,19 @@ async function readJson(file, fallback) {
 async function writeJson(file, data) {
     const tmp = `${file}.${process.pid}.tmp`;
     await fsp.writeFile(tmp, JSON.stringify(data), "utf8");
+    await fsp.rename(tmp, file);
+}
+/**
+ * Like writeJson, but the payload is gzipped ON DISK. Used only for the big pool slices,
+ * where a 100MB slice compresses to ~10MB: 10x less disk (the Railway volume was hitting
+ * ENOSPC) and 10x less write I/O. readJson detects the gzip magic and inflates on the way
+ * back in, so a slice written this way and a legacy plain one are interchangeable to every
+ * reader. Small, human-inspectable files (tokens, private blobs, notes) stay plain via
+ * writeJson.
+ */
+async function writeJsonGz(file, data) {
+    const tmp = `${file}.${process.pid}.tmp`;
+    await fsp.writeFile(tmp, await gzipAsync(JSON.stringify(data)));
     await fsp.rename(tmp, file);
 }
 // Both throw rather than returning a path built from an unvalidated key: a blob name
@@ -247,7 +277,7 @@ function compact(owner, file) {
     return withLock(`pool:${owner}`, async () => {
         try {
             const { pool } = await sliceWithLog(file, `${file}.log`);
-            await writeJson(file, pool);
+            await writeJsonGz(file, pool);
             await fsp.rm(`${file}.log`, { force: true });
         } catch (e) { console.error("compaction failed:", file, e.message); }
     });
@@ -284,7 +314,8 @@ async function readAllPools() {
 
 async function readSlice(deviceId) {
     try {
-        const txt = await fsp.readFile(path.join(DEVICES_DIR, `${deviceId}.json`), "utf8");
+        const buf = await fsp.readFile(path.join(DEVICES_DIR, `${deviceId}.json`));
+        const txt = looksGzipped(buf) ? (await gunzipAsync(buf)).toString("utf8") : buf.toString("utf8");
         const data = JSON.parse(txt);
         return data && typeof data === "object" ? data : { dossiers: {}, users: {} };
     } catch { return { dossiers: {}, users: {} }; }
@@ -736,11 +767,15 @@ const server = http.createServer(async (req, res) => {
         if (url === "/v1/admin/putslice" && req.method === "POST") {
             const file = safe(q.get("f") || ""); if (!file || !file.endsWith(".json")) return send(res, 400, { error: "bad name" });
             const tmp = file + ".upload";
+            // Stored gzipped at rest (see writeJsonGz), still streamed so a big slice never
+            // loads whole on a 1GB container. A gz=1 upload is ALREADY gzip, which is exactly
+            // the at-rest format, so it goes to disk untouched; a plain upload is gzipped on
+            // the way through. Either way the file on disk is gzip and readJson inflates it.
             await new Promise((resolve, reject) => {
                 const ws = fs.createWriteStream(tmp);
-                const src = q.get("gz") === "1" ? req.pipe(require("zlib").createGunzip()) : req;
-                src.on("error", reject); src.pipe(ws);
-                ws.on("finish", resolve); ws.on("error", reject); req.on("error", reject);
+                const src = q.get("gz") === "1" ? req : req.pipe(zlib.createGzip());
+                req.on("error", reject); src.on("error", reject); src.pipe(ws);
+                ws.on("finish", resolve); ws.on("error", reject);
             });
             await fsp.rename(tmp, file);
             if (q.get("dropLog") === "1") await fsp.rm(file + ".log", { force: true });
