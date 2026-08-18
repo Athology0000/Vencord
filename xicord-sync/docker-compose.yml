@@ -1,0 +1,23 @@
+# Local Xicord sync host.
+#   docker compose up -d --build      start (rebuild if server code changed)
+#   docker compose logs -f            watch it
+#   docker compose down               stop
+#
+# Data (pool slices, logs, tokens) lives in ./data on the host, so it survives restarts and
+# rebuilds. Secrets (XICORD_TOKENS) come from ./.env - never committed.
+services:
+  xicord-sync:
+    build: .
+    container_name: xicord-sync
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    env_file:
+      - .env
+    environment:
+      DATA_DIR: /data
+      XICORD_MAINTENANCE: "0"
+      # Plenty of headroom for the full uncapped ~201MB pool (parses to ~1GB).
+      NODE_OPTIONS: --max-old-space-size=4096
+    volumes:
+      - ./data:/data

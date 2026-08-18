@@ -23,3 +23,7 @@ src/userplugins
 
 ExtensionCache/
 /settings
+
+# local docker host - secrets & data, never commit
+xicord-sync/.env
+xicord-sync/data/

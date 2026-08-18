@@ -1,0 +1,10 @@
+# keep the image to just the runtime; never bake data or secrets in
+data/
+*.env
+.env
+_*.test.mjs
+*.test.mjs
+node_modules/
+*.log
+*.tmp
+.git/
