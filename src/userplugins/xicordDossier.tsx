@@ -11,6 +11,7 @@ import { definePluginSettings, Settings } from "@api/Settings";
 import ErrorBoundary from "@components/ErrorBoundary";
 import { Flex } from "@components/Flex";
 import { classes } from "@utils/misc";
+import { showNotification } from "@api/Notifications";
 import { openUserProfile } from "@utils/discord";
 import { ModalContent as ModalContentRaw, ModalHeader as ModalHeaderRaw, ModalRoot as ModalRootRaw, ModalSize, openModal } from "@utils/modal";
 import definePlugin, { OptionType } from "@utils/types";
@@ -70,6 +71,16 @@ const uncapped = (n: number) => !(n > 0);
 const settings = definePluginSettings({
     announceNew: {
         description: "Toast when a target is seen calling with someone new (public servers)",
+        type: OptionType.BOOLEAN,
+        default: false,
+    },
+    alerts: {
+        description: "Desktop alerts for WATCHED people: two targets in a voice channel together (co-presence), and a target changing their name / avatar / bio. Each is cooled down per subject so it cannot spam you",
+        type: OptionType.BOOLEAN,
+        default: false,
+    },
+    alertOnline: {
+        description: "Also alert when a watched person comes online (requires Alerts above). Off by default because a flapping connection is noisy; cooled down per person",
         type: OptionType.BOOLEAN,
         default: false,
     },
@@ -1667,6 +1678,8 @@ function unloadAccount() {
     }
     for (const id of [...openGame.keys()]) closeGame(id, now);
     open.clear();
+    // Alert state is about who is watched NOW; the incoming account has its own watchlist.
+    watchedVoiceAt.clear(); lastStatus.clear(); alertCooldowns.clear();
     dirty = true;
     flush(); // still keyed to the OLD account — see flush()
     flushFriends(); // ditto — see flushFriends()
@@ -1884,8 +1897,14 @@ function captureAbout(id: string) {
     const next = buildAbout(user, profile, Date.now());
     if (!next) return;
     const p = profileFor(id);
-    const merged = mergeAbout(p.about, next);
-    if (p.about && aboutSig(p.about) === aboutSig(merged)) return;   // nothing of substance changed
+    const prevAbout = p.about;
+    const merged = mergeAbout(prevAbout, next);
+    if (prevAbout && aboutSig(prevAbout) === aboutSig(merged)) return;   // nothing of substance changed
+    // Alert a watched person's bio/pronoun change (only against one we already had).
+    if (prevAbout) {
+        if ((prevAbout.bio || "") !== (merged.bio || "")) alertIdentityChange(id, "bio", "updated their About Me");
+        else if ((prevAbout.pronouns || "") !== (merged.pronouns || "")) alertIdentityChange(id, "pronouns", `${prevAbout.pronouns || "none"} -> ${merged.pronouns || "none"}`);
+    }
     p.about = merged;
     p.updated = merged.at;
     scheduleFlush();
@@ -1937,6 +1956,8 @@ function reconcileGame(id: string, update: any) {
 const onPresenceUpdates = (e: any) => {
     // same reason as onVoiceStateUpdates: never write before the store has loaded
     if (!active || !loaded) return;
+    // Comes-online alerts key on WATCHED people, independent of the dossier's tracked set.
+    try { checkOnline(e?.updates ?? []); } catch { }
     const track = trackedSet();
     if (track.size === 0) return;
     for (const update of e?.updates ?? []) {
@@ -2111,7 +2132,87 @@ const onVoiceStateUpdates = (e: any) => {
         if (st?.userId && track.has(st.userId)) affected.add(st.userId);
     }
     for (const id of affected) if (track.has(id) || open.has(id)) reconcile(id);
+    // Co-presence runs off the raw voice states, not the tracked set: it is about WATCHED
+    // people specifically, and fires even for a pair the dossier is not propagating through.
+    try { updateWatchedVoice(e?.voiceStates ?? []); } catch { }
 };
+
+// ---------------------------------------------------------------------------
+// Alerts — the passive dossier made active
+// ---------------------------------------------------------------------------
+// Everything worth alerting on is already seen live; this turns the interesting transitions
+// into desktop notifications. Gated to WATCHED people only, master-off by default, and every
+// alert is cooled down per subject so a flapping status or a busy channel cannot spam you.
+const ALERT_COOLDOWN = 5 * 60 * 1000;
+const alertCooldowns = new Map<string, number>();
+function alertsOn(): boolean { try { return !!settings.store.alerts; } catch { return false; } }
+/** True at most once per ALERT_COOLDOWN for a given key; records the firing. */
+function dueForAlert(key: string, now: number): boolean {
+    const last = alertCooldowns.get(key) ?? 0;
+    if (now - last < ALERT_COOLDOWN) return false;
+    alertCooldowns.set(key, now);
+    if (alertCooldowns.size > 2000) { const cut = now - ALERT_COOLDOWN; for (const [k, t] of alertCooldowns) if (t < cut) alertCooldowns.delete(k); }
+    return true;
+}
+function isOffline(s?: string): boolean { return !s || s === "offline" || s === "invisible"; }
+/** A first sighting (prev undefined) never counts: we cannot know they were offline before. */
+function isOnlineTransition(prev: string | undefined, next: string): boolean {
+    return prev !== undefined && isOffline(prev) && !isOffline(next);
+}
+/** Channels holding two or more watched people, as { channel, ids:[sorted] }. */
+function coPresenceGroups(watchedAt: Map<string, string>): Array<{ channel: string; ids: string[]; }> {
+    const byChan = new Map<string, string[]>();
+    for (const [uid, ch] of watchedAt) { if (!ch) continue; const a = byChan.get(ch); if (a) a.push(uid); else byChan.set(ch, [uid]); }
+    const out: Array<{ channel: string; ids: string[]; }> = [];
+    for (const [ch, ids] of byChan) if (ids.length >= 2) out.push({ channel: ch, ids: ids.sort() });
+    return out;
+}
+function watchName(id: string): string { try { return uname(id) || UserStore.getUser(id)?.username || `user ${id.slice(0, 6)}`; } catch { return id; } }
+function notify(title: string, body: string, key: string) {
+    try { showNotification({ title, body, permanent: false }); }
+    catch { try { Toasts.show({ message: `${title} — ${body}`, id: `xicord-alert-${key}`, type: Toasts.Type.MESSAGE, options: { position: Toasts.Position.BOTTOM } }); } catch { } }
+}
+function fireAlert(key: string, title: string, body: string) {
+    if (!alertsOn()) return;
+    if (!dueForAlert(key, Date.now())) return;
+    notify(title, body, key);
+}
+
+// Which channel each watched person is currently in, maintained off voice updates.
+const watchedVoiceAt = new Map<string, string>();
+function updateWatchedVoice(voiceStates: any[]) {
+    if (!alertsOn()) return;
+    let touched = false;
+    for (const st of voiceStates || []) {
+        const uid = st?.userId; if (!uid || !WatchAPI.has(uid)) continue;
+        const ch = st?.channelId || null;
+        if (ch) { if (watchedVoiceAt.get(uid) !== ch) { watchedVoiceAt.set(uid, ch); touched = true; } }
+        else if (watchedVoiceAt.delete(uid)) touched = true;
+    }
+    if (!touched) return;
+    for (const g of coPresenceGroups(watchedVoiceAt)) {
+        const names = g.ids.map(watchName);
+        fireAlert(`copresence:${g.channel}:${g.ids.join(",")}`, "Targets in voice together", `${names.join(", ")} are in a voice channel right now`);
+    }
+}
+
+// Last-seen status per watched person, for the comes-online alert.
+const lastStatus = new Map<string, string>();
+function checkOnline(updates: any[]) {
+    if (!alertsOn() || !settings.store.alertOnline) return;
+    for (const u of updates || []) {
+        const id = u?.user?.id; if (!id || !WatchAPI.has(id)) continue;
+        const next = String(u?.status ?? "");
+        const prev = lastStatus.get(id);
+        lastStatus.set(id, next);
+        if (isOnlineTransition(prev, next)) fireAlert(`online:${id}`, "Target came online", `${watchName(id)} is now ${next}`);
+    }
+}
+/** A watched person's look or bio changed — fired from the identity/about capture points. */
+function alertIdentityChange(id: string, kind: string, detail: string) {
+    if (!alertsOn() || !WatchAPI.has(id)) return;
+    fireAlert(`${kind}:${id}:${detail}`, `Target changed their ${kind}`, `${watchName(id)}${detail ? ` — ${detail}` : ""}`);
+}
 
 /** Merge persisted totals with any currently-open overlap, for display/export. */
 function viewProfile(targetId: string) {
@@ -2369,6 +2470,12 @@ function rememberUser(u: any) {
     const now = Date.now();
     if (recordIdentity(identity, u.id, prev, { username: u.username, avatar, banner }, now)) {
         scheduleIdentityFlush();
+    }
+    // Alert a watched person's rename or new avatar (only against a look we already had —
+    // a first sighting is not a change).
+    if (prev) {
+        if (prev.username !== u.username) alertIdentityChange(u.id, "name", `${prev.username} -> ${u.username}`);
+        else if (prev.avatar !== avatar) alertIdentityChange(u.id, "avatar", "new avatar");
     }
     knownUsers[u.id] = { username: u.username, avatar, banner, at: now };
     scheduleNamesFlush();
